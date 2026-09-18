@@ -464,7 +464,11 @@ export async function startRepositorySync(
       );
       truncatedTree = tree.truncated;
       const ref = metadata.defaultBranch;
-      for (const fileChunk of chunk(tree.entries, SYNC_BOUNDS.bulkChunk)) {
+      // Persist blobs only: directory/submodule entries inflate file counts
+      // (directory structure is already implicit in blob paths) and would
+      // violate the files_blob_only constraint.
+      const blobEntries = tree.entries.filter((e) => e.type === "blob");
+      for (const fileChunk of chunk(blobEntries, SYNC_BOUNDS.bulkChunk)) {
         await db
           .insert(files)
           .values(
@@ -490,10 +494,10 @@ export async function startRepositorySync(
             },
           });
       }
-      fileCount = tree.entries.length;
+      fileCount = blobEntries.length;
       if (!tree.truncated) {
         // Full snapshot: drop paths that no longer exist.
-        const currentPaths = new Set(tree.entries.map((e) => e.path));
+        const currentPaths = new Set(blobEntries.map((e) => e.path));
         const stored = await db
           .select({ id: files.id, path: files.path })
           .from(files)
@@ -560,9 +564,26 @@ export async function startRepositorySync(
         : err instanceof SyncError
           ? err.code
           : "UNKNOWN";
+    // Only classified errors carry safe messages; unknown failures must not
+    // leak implementation details (or, worse, interpolated secrets) anywhere.
     const message =
-      err instanceof Error ? err.message : "Repository sync failed";
-    await finishFailed(code, message);
+      err instanceof GithubApiError || err instanceof SyncError
+        ? err.message
+        : "Repository sync failed unexpectedly";
+    try {
+      await finishFailed(code, message);
+    } catch {
+      // Recording the failure must never mask the original error (which is
+      // what the caller — and the sync_runs row, when writable — reports).
+      logger.error(
+        { runId, repositoryId, stage: "record-failure" },
+        "Failed to record sync failure",
+      );
+    }
+    logger.error(
+      { runId, repositoryId, code },
+      "Repository sync failed",
+    );
     throw err;
   }
 }

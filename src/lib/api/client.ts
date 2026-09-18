@@ -29,7 +29,11 @@ class ApiClient {
       // Include the HTTP-only session cookie on every API call.
       credentials: 'include',
       headers: {
-        'Content-Type': 'application/json',
+        // Only declare a JSON body when one is actually sent: Fastify
+        // rejects bodiless requests carrying a JSON content-type
+        // (FST_ERR_CTP_EMPTY_JSON_BODY), which broke bodyless POSTs
+        // such as sync and logout.
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
         ...headers,
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -129,6 +133,10 @@ class ApiClient {
   async searchMemory(id: string, query: string): Promise<MemorySearchResult> {
     const params = new URLSearchParams({ q: query });
     return this.request<MemorySearchResult>(`/api/repositories/${id}/activity?${params.toString()}`);
+  }
+
+  async getRepositoryRisks(id: string): Promise<RiskReport> {
+    return this.request<RiskReport>(`/api/repositories/${id}/risks`);
   }
 
   async getHealth() {
@@ -255,6 +263,46 @@ export interface SyncResult {
   contributorCount: number;
   truncatedTree: boolean;
   durationMs: number;
+}
+
+export interface RiskEvidenceRef {
+  kind: 'commit' | 'file' | 'contributor';
+  value: string;
+}
+
+export interface RiskEvidence {
+  label: string;
+  value: string;
+  ref?: RiskEvidenceRef | null;
+}
+
+export interface RiskRelatedCommit {
+  sha: string;
+  message: string | null;
+  authorLogin: string | null;
+  committedAt: string | null;
+}
+
+export interface RiskFinding {
+  id: string;
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  summary: string;
+  detectedAt: string;
+  evidence: RiskEvidence[];
+  affectedFiles: string[];
+  affectedContributors: string[];
+  relatedCommits: RiskRelatedCommit[];
+  recommendation: string;
+}
+
+export interface RiskReport {
+  repository: { id: string; fullName: string };
+  generatedAt: string;
+  analysisWindow: { type: string; value: number; start: string; end: string };
+  summary: { total: number; critical: number; high: number; medium: number; low: number };
+  findings: RiskFinding[];
 }
 
 export interface ActivityEvent {

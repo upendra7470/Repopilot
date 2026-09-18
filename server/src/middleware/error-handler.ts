@@ -15,7 +15,7 @@ export class AppError extends Error {
 }
 
 export async function errorHandler(app: FastifyInstance): Promise<void> {
-  app.setErrorHandler((error: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
+  app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
     const statusCode = error.statusCode ?? 500;
     const code = (error as AppError).code ?? "INTERNAL_ERROR";
     const message = statusCode >= 500 ? "Internal server error" : error.message;
@@ -23,7 +23,11 @@ export async function errorHandler(app: FastifyInstance): Promise<void> {
 
     app.log.error({ err: error, statusCode, code }, "Request error");
 
+    // requestId lets a user report "Request failed ... (request <id>)" and
+    // lets the developer correlate it with server logs — without leaking
+    // anything about the failure itself.
     return reply.status(statusCode).send({
+      requestId: request.id,
       error: {
         code,
         message,

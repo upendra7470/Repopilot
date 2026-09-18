@@ -108,11 +108,54 @@ describe('ApiClient', () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'http://localhost:3001/api/repositories',
+      expect.objectContaining({ credentials: 'include' })
+    );
+  });
+
+  it('sends Content-Type only when a body is present', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+
+    await api.createUser({ login: 'testuser' });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      expect.anything(),
       expect.objectContaining({
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
         }),
       })
     );
+  });
+
+  it('omits Content-Type on bodiless POSTs so servers accept them', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      jsonResponse({ runId: 'r1', status: 'succeeded' })
+    );
+
+    // Regression: the client used to send `Content-Type: application/json`
+    // with no body, which Fastify rejects with
+    // FST_ERR_CTP_EMPTY_JSON_BODY ("Body cannot be empty ...").
+    await api.syncRepository('repo-1');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+    expect(init.headers).not.toMatchObject({
+      'Content-Type': expect.anything(),
+    });
+  });
+
+  it('omits Content-Type on logout as well', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+
+    await api.logout();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe('POST');
+    expect(init.headers).not.toMatchObject({
+      'Content-Type': expect.anything(),
+    });
   });
 });

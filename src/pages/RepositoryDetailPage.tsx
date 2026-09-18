@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   FileText,
@@ -155,15 +155,33 @@ function TreeView({
 
 type DetailTab = 'overview' | 'files' | 'contributors' | 'timeline';
 
+function validTab(value: string | null): DetailTab | null {
+  return value === 'overview' ||
+    value === 'files' ||
+    value === 'contributors' ||
+    value === 'timeline'
+    ? value
+    : null;
+}
+
 export function RepositoryDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  // Deep links from risk findings (?tab=&path=&contributor=).
+  const deepLink = useRef({
+    tab: validTab(searchParams.get('tab')),
+    path: searchParams.get('path'),
+    contributor: searchParams.get('contributor'),
+  });
   const [repo, setRepo] = useState<ConnectedRepoDetail | null>(null);
   const [overview, setOverview] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<DetailTab>('overview');
+  const [activeTab, setActiveTab] = useState<DetailTab>(
+    () => deepLink.current.tab ?? 'overview',
+  );
 
   const [files, setFiles] = useState<RepoFileItem[] | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -298,6 +316,49 @@ export function RepositoryDetailPage() {
     },
     [id],
   );
+
+  // Apply one-shot deep links from risk findings (external system sync).
+  useEffect(() => {
+    if (!id) return;
+    const link = deepLink.current;
+    if (link.tab !== 'files' && link.tab !== 'contributors') return;
+    let cancelled = false;
+    if (link.tab === 'files') {
+      void api.listRepoFiles(id).then(
+        (list) => {
+          if (cancelled) return;
+          setFiles(list);
+          if (link.path) {
+            const match = list.find((f) => f.path === link.path);
+            if (match) void handleSelectFile(match);
+          }
+        },
+        () => {
+          if (!cancelled) setFiles([]);
+        },
+      );
+    } else {
+      void api.listRepoContributors(id).then(
+        (list) => {
+          if (cancelled) return;
+          setContributorSummaries(list);
+          if (link.contributor) {
+            const match = list.find((c) => c.login === link.contributor);
+            if (match) void handleSelectContributor(match.id);
+          }
+        },
+        () => {
+          if (!cancelled) setContributorSummaries([]);
+        },
+      );
+    }
+    deepLink.current = { tab: null, path: null, contributor: null };
+    return () => {
+      cancelled = true;
+    };
+    // One-shot on mount for the initial deep link only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const handleSearch = useCallback(
     async (query: string) => {

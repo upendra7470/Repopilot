@@ -9,7 +9,9 @@ import {
   index,
   integer,
   json,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const users = pgTable(
   "users",
@@ -280,6 +282,10 @@ export const files = pgTable(
       table.path,
     ),
     index("files_repo_idx").on(table.repositoryId),
+    // The files table is a *file* snapshot: only blobs are persisted.
+    // Directory/submodule entries from the Git Trees API are filtered
+    // during sync (directory structure is implicit in blob paths).
+    check("files_blob_only", sql`${table.type} = 'blob'`),
   ],
 );
 

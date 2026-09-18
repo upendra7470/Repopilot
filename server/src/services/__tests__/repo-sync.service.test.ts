@@ -194,6 +194,7 @@ describe("Repository sync service", () => {
       entries: [
         { path: "README.md", sha: SHA("e"), type: "blob", size: 42, mode: "100644" },
         { path: "src", sha: SHA("f"), type: "tree", size: null, mode: "040000" },
+        { path: "vendor", sha: SHA("0"), type: "tree", size: null, mode: "040000" },
       ],
     };
     mockState.commitFiles = [
@@ -212,14 +213,16 @@ describe("Repository sync service", () => {
     expect(summary.status).toBe("succeeded");
     expect(summary.branchCount).toBe(2);
     expect(summary.commitCount).toBe(2);
-    expect(summary.fileCount).toBe(2);
+    // Only the blob is persisted: directory entries ("src", "vendor")
+    // must never inflate file counts.
+    expect(summary.fileCount).toBe(1);
     expect(summary.contributorCount).toBe(2);
 
     const counts = await tableCounts(repo.id);
     expect(counts).toMatchObject({
       branches: 2,
       commits: 2,
-      files: 2,
+      files: 1,
       contributors: 2,
       commitFiles: 2,
     });
@@ -254,9 +257,26 @@ describe("Repository sync service", () => {
     expect(summaryCounts).toMatchObject({
       branches: 2,
       commits: 2,
-      files: 2,
+      files: 1,
       contributors: 2,
     });
+
+    // No directory rows persisted at all.
+    const storedFiles = await db
+      .select({ path: files.path, type: files.type })
+      .from(files)
+      .where(eq(files.repositoryId, repo.id));
+    expect(storedFiles).toEqual([{ path: "README.md", type: "blob" }]);
+
+    // The database itself rejects non-blob rows (files_blob_only CHECK;
+    // Drizzle surfaces the PostgreSQL code on `cause`).
+    const rejected = await db
+      .insert(files)
+      .values({ repositoryId: repo.id, ref: "main", path: "adir", type: "tree" })
+      .catch((e: unknown) => e);
+    expect(
+      (rejected as { cause?: { code?: string } })?.cause?.code,
+    ).toBe("23514");
   });
 
   it("is idempotent across repeated syncs", async () => {

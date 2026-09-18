@@ -248,6 +248,42 @@ describe('RepositoryDetailPage memory workspace', () => {
     expect(detailCalls).toContain('http://localhost:3001/api/repositories/repo-2');
   });
 
+  it('honors file deep links from risk findings', async () => {
+    vi.stubGlobal('fetch', mockFetch());
+    render(
+      <MemoryRouter
+        initialEntries={[
+          '/repository/repo-1?tab=files&path=src/payments/service.ts',
+        ]}
+      >
+        <Routes>
+          <Route path="/repository/:id" element={<RepositoryDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // File pre-selected with history loaded, no manual clicks needed.
+    expect(
+      await screen.findByText(/Changed 1 times/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Latest change')).toBeInTheDocument();
+  });
+
+  it('honors contributor deep links from risk findings', async () => {
+    vi.stubGlobal('fetch', mockFetch());
+    render(
+      <MemoryRouter
+        initialEntries={['/repository/repo-1?tab=contributors&contributor=alice']}
+      >
+        <Routes>
+          <Route path="/repository/:id" element={<RepositoryDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(/1 files touched/)).toBeInTheDocument();
+  });
+
   it('surfaces sync failures with backend messages', async () => {
     vi.stubGlobal(
       'fetch',
