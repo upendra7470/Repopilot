@@ -1,12 +1,19 @@
 import clsx from "clsx";
-import { Menu, Search, Bell } from "lucide-react";
+import { Menu, Search, Bell, LogOut } from "lucide-react";
+import { useAuth } from "../../auth/useAuth";
 
 interface TopBarProps {
   onMenuToggle?: () => void;
   onCommandOpen?: () => void;
 }
 
+function UserInitials({ login }: { login: string }) {
+  return <>{login.slice(0, 2).toUpperCase()}</>;
+}
+
 export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
+  const { user, logout } = useAuth();
+
   return (
     <header className="flex items-center justify-between h-14 px-4 border-b border-border-primary bg-bg-secondary/80 backdrop-blur-md flex-shrink-0">
       {/* Left: mobile menu + breadcrumb */}
@@ -43,7 +50,7 @@ export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
         </kbd>
       </button>
 
-      {/* Right: notifications + avatar */}
+      {/* Right: notifications + identity + sign out */}
       <div className="flex items-center gap-2">
         <button
           className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors relative"
@@ -52,9 +59,34 @@ export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
           <Bell size={18} />
           <span className="absolute top-1 right-1 w-2 h-2 bg-danger rounded-full" />
         </button>
-        <div className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center ml-1">
-          <span className="text-xs font-medium text-accent">SC</span>
-        </div>
+        {user && (
+          <div className="flex items-center gap-2 ml-1">
+            {user.avatarUrl ? (
+              <img
+                src={user.avatarUrl}
+                alt={user.login}
+                className="w-7 h-7 rounded-full"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center">
+                <span className="text-xs font-medium text-accent">
+                  <UserInitials login={user.login} />
+                </span>
+              </div>
+            )}
+            <span className="hidden md:inline text-sm text-text-secondary max-w-32 truncate">
+              {user.login}
+            </span>
+            <button
+              onClick={() => void logout()}
+              className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

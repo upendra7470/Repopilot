@@ -3,10 +3,25 @@ import { z } from "zod";
 import {
   createRepository,
   getRepositoryById,
-  listRepositories,
   getUserRepositories,
+  linkUserRepository,
 } from "../services/repository.service.js";
+import {
+  requireAuth,
+  requireRepositoryAccess,
+} from "../middleware/auth.js";
 
+/**
+ * Repository records scoped to the authenticated user.
+ *
+ * Every read is authorized against the user_repositories relationship:
+ * - listing returns only the current user's repositories,
+ * - fetching by id requires a relationship (otherwise privacy-preserving
+ *   404 — the existence of other users' repositories is not leaked),
+ * - creation links the new record to the creator as owner. The
+ *   authenticated session is the source of identity; no client-supplied
+ *   user id is trusted.
+ */
 const createRepositorySchema = z.object({
   owner: z.string().min(1).max(255),
   name: z.string().min(1).max(255),
@@ -19,8 +34,12 @@ const createRepositorySchema = z.object({
 
 type CreateRepositoryInput = z.infer<typeof createRepositorySchema>;
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
   app.get("/repositories", {
+    preHandler: [requireAuth],
     schema: {
       response: {
         200: {
@@ -37,19 +56,21 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
               defaultBranch: { type: "string" },
               isPrivate: { type: "boolean" },
               githubId: { type: ["string", "null"] },
+              role: { type: "string" },
               createdAt: { type: "string" },
             },
           },
         },
       },
     },
-    handler: async (_request, reply) => {
-      const repos = await listRepositories();
+    handler: async (request, reply) => {
+      const repos = await getUserRepositories(request.user!.id);
       return reply.send(repos);
     },
   });
 
   app.get("/repositories/:id", {
+    preHandler: [requireAuth, requireRepositoryAccess],
     schema: {
       params: {
         type: "object",
@@ -78,15 +99,20 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
+      if (!UUID_PATTERN.test(id)) {
+        return reply.badRequest("Invalid repository id");
+      }
+      // Access already verified by requireRepositoryAccess.
       const repo = await getRepositoryById(id);
       if (!repo) {
-        return reply.notFound(`Repository ${id} not found`);
+        return reply.notFound("Repository not found");
       }
       return reply.send(repo);
     },
   });
 
   app.post("/repositories", {
+    preHandler: [requireAuth],
     schema: {
       body: {
         type: "object",
@@ -139,12 +165,14 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
         isPrivate: input.isPrivate,
         githubId: input.githubId,
       });
+      await linkUserRepository(request.user!.id, repo.id, "owner");
 
       return reply.status(201).send(repo);
     },
   });
 
   app.get("/users/:userId/repositories", {
+    preHandler: [requireAuth],
     schema: {
       params: {
         type: "object",
@@ -177,6 +205,11 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const { userId } = request.params as { userId: string };
+      // Users may only list their own repositories; anything else is 404
+      // so user ids cannot be used to probe other users' data.
+      if (userId !== request.user!.id) {
+        return reply.notFound("Repositories not found");
+      }
       const repos = await getUserRepositories(userId);
       return reply.send(repos);
     },

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { repositories, userRepositories } from "../db/schema.js";
 import { getLogger } from "../utils/logger.js";
@@ -54,6 +54,49 @@ export async function listRepositories() {
 
   logger.debug("Listing all repositories");
   return db.select().from(repositories);
+}
+
+/**
+ * Whether the user has any authorized relationship to the repository.
+ * Used by authorization checks; callers map "false" to 404 so the existence
+ * of other users' repositories is not leaked.
+ */
+export async function userHasRepositoryAccess(
+  userId: string,
+  repositoryId: string,
+): Promise<boolean> {
+  const logger = getLogger();
+  const db = getDb();
+
+  logger.debug("Checking repository access");
+  const rows = await db
+    .select({ id: userRepositories.id })
+    .from(userRepositories)
+    .where(
+      and(
+        eq(userRepositories.userId, userId),
+        eq(userRepositories.repositoryId, repositoryId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** Grant a user a role on a repository (used at creation time). */
+export async function linkUserRepository(
+  userId: string,
+  repositoryId: string,
+  role = "owner",
+) {
+  const logger = getLogger();
+  const db = getDb();
+
+  logger.debug("Linking user to repository");
+  const result = await db
+    .insert(userRepositories)
+    .values({ userId, repositoryId, role })
+    .returning();
+  return result[0];
 }
 
 export async function getUserRepositories(userId: string) {

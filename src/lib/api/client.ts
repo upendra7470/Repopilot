@@ -26,6 +26,8 @@ class ApiClient {
 
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
+      // Include the HTTP-only session cookie on every API call.
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...headers,
@@ -44,6 +46,18 @@ class ApiClient {
     }
 
     return response.json() as Promise<T>;
+  }
+
+  async getSession(): Promise<SessionState> {
+    return this.request<SessionState>('/api/auth/session');
+  }
+
+  async logout(): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
+  }
+
+  githubLoginUrl(): string {
+    return `${this.baseUrl}/api/auth/github`;
   }
 
   async getHealth() {
@@ -84,6 +98,19 @@ class ApiClient {
     });
   }
 }
+
+/** Safe user fields returned by GET /api/auth/session. No credentials. */
+export interface SessionUser {
+  id: string;
+  login: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+}
+
+export type SessionState =
+  | { authenticated: false; user: null }
+  | { authenticated: true; user: SessionUser };
 
 export class ApiError extends Error {
   code: string;

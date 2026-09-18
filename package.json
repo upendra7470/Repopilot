@@ -20,7 +20,11 @@
     "typecheck": "tsc -b && tsc -b server/tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/oauth2": "^8.3.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@fastify/sensible": "^6.0.5",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",

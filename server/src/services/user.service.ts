@@ -33,6 +33,39 @@ export async function getUserByLogin(login: string) {
   return result[0] ?? null;
 }
 
+export async function getUserByGithubId(githubId: string) {
+  const logger = getLogger();
+  const db = getDb();
+
+  logger.debug("Fetching user by GitHub ID");
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.githubId, githubId))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+export interface UpdateUserInput {
+  login?: string;
+  name?: string | null;
+  email?: string | null;
+  avatarUrl?: string | null;
+}
+
+export async function updateUser(id: string, data: UpdateUserInput) {
+  const logger = getLogger();
+  const db = getDb();
+
+  logger.debug({ id }, "Updating user");
+  const result = await db
+    .update(users)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(users.id, id))
+    .returning();
+  return result[0] ?? null;
+}
+
 export async function createUser(data: CreateUserInput) {
   const logger = getLogger();
   const db = getDb();
