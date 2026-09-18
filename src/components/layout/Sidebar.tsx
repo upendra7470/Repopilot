@@ -12,16 +12,14 @@ import {
   Users,
   Boxes,
   BrainCircuit,
-  Folder,
-  GitCommitHorizontal,
-  GitBranch,
+  FolderGit2,
   Sparkles,
   Settings,
   ChevronLeft,
   ChevronRight,
   X,
 } from "lucide-react";
-import { demoRepository } from "../../data/demo";
+import { api, type ConnectedRepo } from "../../lib/api/client";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -68,12 +66,91 @@ const sections: NavSection[] = [
   {
     title: "REPOSITORY",
     items: [
-      { id: "files", label: "Files", icon: Folder },
-      { id: "commits", label: "Commits", icon: GitCommitHorizontal },
-      { id: "branches", label: "Branches", icon: GitBranch },
+      { id: "repository", label: "Repositories", icon: FolderGit2 },
     ],
   },
 ];
+
+/**
+ * Workspace selector backed by the authenticated user's real connected
+ * repositories. Never falls back to demo data: loading shows a placeholder,
+ * empty shows a connect affordance, failure shows a neutral entry — all
+ * navigating to the real repository flow.
+ */
+function WorkspaceSelector({
+  collapsed,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onNavigate: (route: string) => void;
+}) {
+  const [repos, setRepos] = useState<ConnectedRepo[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.listConnectedRepositories().then(
+      (list) => {
+        if (!cancelled) setRepos(list);
+      },
+      () => {
+        if (!cancelled) setRepos([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const primary = repos && repos.length > 0 ? repos[0] : null;
+  const target = primary ? `repository/${primary.id}` : "repository";
+  const initial = primary ? primary.name.charAt(0).toUpperCase() : "R";
+  const title = primary ? primary.name : repos === null ? "…" : "No repository";
+  const subtitle = primary
+    ? primary.fullName
+    : repos === null
+      ? "Loading…"
+      : "Connect one to start";
+
+  const body = (
+    <>
+      <div className="w-5 h-5 rounded bg-accent/15 flex items-center justify-center flex-shrink-0">
+        <span className="text-[10px] font-medium text-accent">{initial}</span>
+      </div>
+      <div className="flex flex-col min-w-0">
+        <span className="text-xs font-medium text-text-primary truncate">
+          {title}
+        </span>
+        <span className="text-[10px] text-text-muted truncate">{subtitle}</span>
+      </div>
+    </>
+  );
+
+  if (collapsed) {
+    return (
+      <div className="px-3 py-3 border-b border-border-primary">
+        <button
+          onClick={() => onNavigate(target)}
+          className="w-8 h-8 rounded-md bg-accent/15 flex items-center justify-center mx-auto hover:bg-accent/25 transition-colors"
+          aria-label={primary ? `Open ${primary.fullName}` : "Go to repositories"}
+        >
+          <span className="text-xs font-medium text-accent">{initial}</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-3 py-3 border-b border-border-primary">
+      <button
+        onClick={() => onNavigate(target)}
+        aria-label={primary ? `Open ${primary.fullName}` : "Go to repositories"}
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md bg-bg-tertiary hover:bg-bg-hover transition-colors text-left"
+      >
+        {body}
+      </button>
+    </div>
+  );
+}
 
 function SidebarInner({
   collapsed,
@@ -140,31 +217,7 @@ function SidebarInner({
       </div>
 
       {/* Repository selector */}
-      <div className="px-3 py-3 border-b border-border-primary">
-        {!collapsed ? (
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-bg-tertiary cursor-pointer hover:bg-bg-hover transition-colors">
-            <div className="w-5 h-5 rounded bg-accent/15 flex items-center justify-center flex-shrink-0">
-              <span className="text-[10px] font-medium text-accent">
-                {demoRepository.name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-xs font-medium text-text-primary truncate">
-                {demoRepository.name}
-              </span>
-              <span className="text-[10px] text-text-muted truncate">
-                {demoRepository.fullName}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="w-8 h-8 rounded-md bg-accent/15 flex items-center justify-center mx-auto">
-            <span className="text-xs font-medium text-accent">
-              {demoRepository.name.charAt(0).toUpperCase()}
-            </span>
-          </div>
-        )}
-      </div>
+      <WorkspaceSelector collapsed={collapsed} onNavigate={onNavigate} />
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-2 px-2">

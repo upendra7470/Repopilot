@@ -475,14 +475,14 @@ export function RepositoryPage() {
       )}
 
       <section aria-label="Connected repositories">
-        {connected === null ? (
-          <LoadingState type="dashboard" />
-        ) : connectedError ? (
+        {connectedError ? (
           <ErrorState
             title="Could not load connected repositories"
             message={connectedError}
             onRetry={() => void loadConnected()}
           />
+        ) : connected === null ? (
+          <LoadingState type="dashboard" />
         ) : connected.length === 0 ? (
           <EmptyState
             icon={<GitFork size={24} />}

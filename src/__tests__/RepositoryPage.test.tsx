@@ -304,6 +304,59 @@ describe('RepositoryPage connection flow', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows an error state — never demo data — when the list API fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        if (String(url).endsWith('/api/repositories')) {
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            json: () =>
+              Promise.resolve({
+                error: { code: 'INTERNAL_ERROR', message: 'boom' },
+              }),
+          });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText('Could not load connected repositories'),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/nexuspay/i);
+  });
+
+  it('reloads connected repositories from the API on remount (refresh-safe)', async () => {
+    const fetchMock = baseRoutes();
+    vi.stubGlobal('fetch', fetchMock);
+    const first = render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('octocat/hello-world')).toBeInTheDocument();
+    first.unmount();
+
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('octocat/hello-world')).toBeInTheDocument();
+    const listCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith('/api/repositories'),
+    );
+    // Mounted twice → fetched twice. No cached/hardcoded state.
+    expect(listCalls.length).toBe(2);
+  });
+
   it('shows a loading state while connected repositories load', async () => {
     vi.stubGlobal(
       'fetch',

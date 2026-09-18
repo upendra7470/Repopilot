@@ -1,6 +1,33 @@
 import clsx from "clsx";
 import { Menu, Search, Bell, LogOut } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+
+/** Truthful breadcrumb derived from the current route — never hardcoded. */
+const ROUTE_LABELS: Record<string, string> = {
+  overview: "Overview",
+  risks: "Risks",
+  "pull-requests": "PR Intelligence",
+  issues: "Issues",
+  "ci-cd": "CI/CD",
+  incidents: "Incidents",
+  timeline: "Timeline",
+  contributors: "Contributors",
+  components: "Components",
+  "knowledge-graph": "Knowledge Graph",
+  repository: "Repositories",
+  ask: "Ask RepoPilot",
+  settings: "Settings",
+  login: "Sign in",
+};
+
+function useBreadcrumb(): string {
+  const { pathname } = useLocation();
+  const segments = pathname.split("/").filter(Boolean);
+  const [section, detail] = segments;
+  const label = (section && ROUTE_LABELS[section]) || "RepoPilot";
+  return detail ? `${label} / Details` : label;
+}
 
 interface TopBarProps {
   onMenuToggle?: () => void;
@@ -13,6 +40,7 @@ function UserInitials({ login }: { login: string }) {
 
 export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
   const { user, logout } = useAuth();
+  const breadcrumb = useBreadcrumb();
 
   return (
     <header className="flex items-center justify-between h-14 px-4 border-b border-border-primary bg-bg-secondary/80 backdrop-blur-md flex-shrink-0">
@@ -25,10 +53,8 @@ export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
         >
           <Menu size={18} />
         </button>
-        <nav className="flex items-center gap-1.5 text-sm">
-          <span className="text-text-muted">nexuspay-platform</span>
-          <span className="text-text-muted">/</span>
-          <span className="text-text-primary font-medium">Overview</span>
+        <nav className="flex items-center gap-1.5 text-sm" aria-label="Breadcrumb">
+          <span className="text-text-primary font-medium">{breadcrumb}</span>
         </nav>
       </div>
 

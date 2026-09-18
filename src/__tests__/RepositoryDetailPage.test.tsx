@@ -217,6 +217,37 @@ describe('RepositoryDetailPage memory workspace', () => {
     expect(screen.getByText('Files (1)')).toBeInTheDocument();
   });
 
+  it('loads the repository identified by the route ID (route isolation)', async () => {
+    const fetchMock = mockFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = render(
+      <MemoryRouter initialEntries={['/repository/repo-1']}>
+        <Routes>
+          <Route path="/repository/:id" element={<RepositoryDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('octocat/hello-world');
+    first.unmount();
+
+    render(
+      <MemoryRouter initialEntries={['/repository/repo-2']}>
+        <Routes>
+          <Route path="/repository/:id" element={<RepositoryDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('octocat/hello-world');
+
+    const detailCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => /\/api\/repositories\/[^/]+$/.test(url));
+    // Each route ID drives its own API request — no shared/default repo.
+    expect(detailCalls).toContain('http://localhost:3001/api/repositories/repo-1');
+    expect(detailCalls).toContain('http://localhost:3001/api/repositories/repo-2');
+  });
+
   it('surfaces sync failures with backend messages', async () => {
     vi.stubGlobal(
       'fetch',
