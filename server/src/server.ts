@@ -1,5 +1,15 @@
+import "dotenv/config";
 import { buildApp } from "./app.js";
 import { getEnv } from "./config/env.js";
+
+function isAddrInUse(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "EADDRINUSE"
+  );
+}
 
 async function main(): Promise<void> {
   const env = getEnv();
@@ -9,7 +19,14 @@ async function main(): Promise<void> {
     await app.listen({ port: env.PORT, host: "0.0.0.0" });
     app.log.info(`Server running on http://localhost:${env.PORT}`);
   } catch (err) {
-    app.log.fatal(err);
+    if (isAddrInUse(err)) {
+      app.log.fatal(
+        `Port ${env.PORT} is already in use. Another backend instance is ` +
+          `probably still running — stop it first, then retry.`,
+      );
+    } else {
+      app.log.fatal(err);
+    }
     process.exit(1);
   }
 

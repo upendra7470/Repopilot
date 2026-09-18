@@ -10,6 +10,17 @@ import {
   requireAuth,
   requireRepositoryAccess,
 } from "../middleware/auth.js";
+import { GithubApiError } from "../services/github-provider.js";
+import {
+  AlreadyConnectedError,
+  connectRepository,
+} from "../services/github-repos.service.js";
+import { sendGithubError } from "./github-errors.js";
+
+const connectSchema = z.object({
+  owner: z.string().min(1).max(255),
+  name: z.string().min(1).max(255),
+});
 
 /**
  * Repository records scoped to the authenticated user.
@@ -56,6 +67,10 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
               defaultBranch: { type: "string" },
               isPrivate: { type: "boolean" },
               githubId: { type: ["string", "null"] },
+              htmlUrl: { type: ["string", "null"] },
+              archived: { type: "boolean" },
+              fork: { type: "boolean" },
+              connectionStatus: { type: "string" },
               role: { type: "string" },
               createdAt: { type: "string" },
             },
@@ -92,6 +107,10 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             defaultBranch: { type: "string" },
             isPrivate: { type: "boolean" },
             githubId: { type: ["string", "null"] },
+            htmlUrl: { type: ["string", "null"] },
+            archived: { type: "boolean" },
+            fork: { type: "boolean" },
+            connectionStatus: { type: "string" },
             createdAt: { type: "string" },
           },
         },
@@ -140,6 +159,10 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             defaultBranch: { type: "string" },
             isPrivate: { type: "boolean" },
             githubId: { type: ["string", "null"] },
+            htmlUrl: { type: ["string", "null"] },
+            archived: { type: "boolean" },
+            fork: { type: "boolean" },
+            connectionStatus: { type: "string" },
             createdAt: { type: "string" },
           },
         },
@@ -196,6 +219,10 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
               defaultBranch: { type: "string" },
               isPrivate: { type: "boolean" },
               githubId: { type: ["string", "null"] },
+              htmlUrl: { type: ["string", "null"] },
+              archived: { type: "boolean" },
+              fork: { type: "boolean" },
+              connectionStatus: { type: "string" },
               role: { type: "string" },
               createdAt: { type: "string" },
             },
@@ -212,6 +239,86 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
       }
       const repos = await getUserRepositories(userId);
       return reply.send(repos);
+    },
+  });
+
+  app.post("/repositories/connect", {
+    preHandler: [requireAuth],
+    config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+    schema: {
+      body: {
+        type: "object",
+        required: ["owner", "name"],
+        properties: {
+          owner: { type: "string" },
+          name: { type: "string" },
+        },
+      },
+      response: {
+        201: {
+          type: "object",
+          required: ["id", "owner", "name", "fullName", "createdAt"],
+          properties: {
+            id: { type: "string" },
+            owner: { type: "string" },
+            name: { type: "string" },
+            fullName: { type: "string" },
+            description: { type: ["string", "null"] },
+            defaultBranch: { type: "string" },
+            isPrivate: { type: "boolean" },
+            githubId: { type: ["string", "null"] },
+            htmlUrl: { type: ["string", "null"] },
+            archived: { type: "boolean" },
+            fork: { type: "boolean" },
+            connectionStatus: { type: "string" },
+            createdAt: { type: "string" },
+          },
+        },
+        409: {
+          type: "object",
+          required: ["error"],
+          properties: {
+            error: {
+              type: "object",
+              required: ["code", "message"],
+              properties: {
+                code: { type: "string" },
+                message: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const body = connectSchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.badRequest(
+          body.error.issues.map((i) => i.message).join(", "),
+        );
+      }
+
+      try {
+        const record = await connectRepository(
+          request.user!.id,
+          body.data.owner,
+          body.data.name,
+        );
+        return reply.status(201).send(record);
+      } catch (err) {
+        if (err instanceof AlreadyConnectedError) {
+          return reply.status(409).send({
+            error: {
+              code: "ALREADY_CONNECTED",
+              message: "Repository is already connected.",
+            },
+          });
+        }
+        if (err instanceof GithubApiError) {
+          return sendGithubError(err, reply);
+        }
+        throw err;
+      }
     },
   });
 }

@@ -42,11 +42,12 @@ function mockFetchSession(authenticated: boolean) {
 }
 
 function Probe() {
-  const { status, user } = useAuth();
+  const { status, user, backendReachable } = useAuth();
   return (
     <div>
       <span data-testid="status">{status}</span>
       <span data-testid="login">{user?.login ?? 'none'}</span>
+      <span data-testid="reachable">{String(backendReachable)}</span>
     </div>
   );
 }
@@ -99,6 +100,88 @@ describe('frontend auth boundary', () => {
     await waitFor(() => {
       expect(screen.getByTestId('status')).toHaveTextContent('unauthenticated');
     });
+  });
+
+  it('marks the backend unreachable only on network failure', async () => {
+    // Network failure (backend down): unreachable.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    );
+    const { unmount } = render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('status')).toHaveTextContent('unauthenticated');
+    });
+    expect(screen.getByTestId('reachable')).toHaveTextContent('false');
+    unmount();
+
+    // HTTP error response: backend is reachable, session is not valid.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: () =>
+          Promise.resolve({ error: { code: 'INTERNAL_ERROR', message: 'x' } }),
+      }),
+    );
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('status')).toHaveTextContent('unauthenticated');
+    });
+    expect(screen.getByTestId('reachable')).toHaveTextContent('true');
+  });
+
+  it('login page warns instead of navigating when the backend is down', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    );
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+    });
+    // No dead-end navigation: the sign-in control is a button, not a link.
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Sign in with GitHub'));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Cannot reach the RepoPilot server',
+      );
+    });
+  });
+
+  it('login page links to the backend OAuth start when reachable', async () => {
+    vi.stubGlobal('fetch', mockFetchSession(false));
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+    });
+    const link = screen.getByRole('link', { name: 'Sign in with GitHub' });
+    expect(link.getAttribute('href')).toContain('/api/auth/github');
   });
 
   it('protected route redirects to login when unauthenticated', async () => {

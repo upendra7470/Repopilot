@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
@@ -10,14 +11,28 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 export function LoginPage() {
-  const { status } = useAuth();
+  const { status, backendReachable } = useAuth();
   const [searchParams] = useSearchParams();
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const errorParam = searchParams.get('error');
-  const errorMessage = errorParam ? (ERROR_MESSAGES[errorParam] ?? 'Sign-in failed. Please try again.') : null;
+  const errorMessage = errorParam
+    ? (ERROR_MESSAGES[errorParam] ?? 'Sign-in failed. Please try again.')
+    : null;
 
   if (status === 'authenticated') {
     return <Navigate to="/" replace />;
   }
+
+  const backendDown = status !== 'loading' && !backendReachable;
+
+  const handleSignInBlocked = () => {
+    // Never navigate to a backend URL we already know is unreachable —
+    // that only produces a dead browser error page.
+    setBlockedMessage(
+      `Cannot reach the RepoPilot server at ${api.getBaseUrl()}. ` +
+        'Start it with `npm run dev:server` (or `npm run dev:all` for frontend + backend), then try again.',
+    );
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4">
@@ -40,6 +55,15 @@ export function LoginPage() {
           <div className="flex items-center justify-center py-3 text-sm text-text-muted">
             Checking session…
           </div>
+        ) : backendDown ? (
+          <button
+            type="button"
+            onClick={handleSignInBlocked}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent/90"
+          >
+            <LogIn size={16} />
+            Sign in with GitHub
+          </button>
         ) : (
           <a
             href={api.githubLoginUrl()}
@@ -50,12 +74,12 @@ export function LoginPage() {
           </a>
         )}
 
-        {errorMessage && (
+        {(blockedMessage || errorMessage) && (
           <div
             role="alert"
             className="mt-4 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
           >
-            {errorMessage}
+            {blockedMessage ?? errorMessage}
           </div>
         )}
 

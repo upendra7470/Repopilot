@@ -40,6 +40,12 @@ export const repositories = pgTable(
       .default("main")
       .notNull(),
     isPrivate: boolean("is_private").default(false).notNull(),
+    htmlUrl: text("html_url"),
+    archived: boolean("archived").default(false).notNull(),
+    fork: boolean("fork").default(false).notNull(),
+    connectionStatus: varchar("connection_status", { length: 20 })
+      .default("connected")
+      .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

@@ -104,16 +104,18 @@ describe("Authentication API", () => {
     });
   });
 
-  it("GET /api/auth/github reports setup requirements when unconfigured", async () => {
+  it("GET /api/auth/github redirects into the app when unconfigured", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/api/auth/github",
     });
 
-    expect(response.statusCode).toBe(503);
-    const body = JSON.parse(response.payload);
-    expect(body.error.code).toBe("OAUTH_NOT_CONFIGURED");
-    assertNoSecrets(response.payload);
+    // Browser navigation must land back in the login error state, never on
+    // a raw error page outside the app.
+    expect(response.statusCode).toBe(302);
+    const location = response.headers.location as string;
+    expect(location).toContain("/login?error=oauth_not_configured");
+    assertNoSecrets(location);
   });
 
   it("POST /api/auth/logout invalidates the session", async () => {

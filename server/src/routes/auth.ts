@@ -60,14 +60,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const oauth = githubOAuth(app);
       if (!isOAuthConfigured() || !oauth) {
-        return reply.status(503).send({
-          error: {
-            code: "OAUTH_NOT_CONFIGURED",
-            message:
-              "GitHub login is not configured. " +
-              "Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET.",
-          },
-        });
+        // This endpoint is entered via top-level browser navigation (the
+        // login button), so redirect back into the app's login error state
+        // instead of stranding the user on a raw JSON error page.
+        const env = getEnv();
+        return reply.redirect(
+          `${env.FRONTEND_URL}/login?error=oauth_not_configured`,
+        );
       }
       const authorizationUri = await oauth.generateAuthorizationUri(
         request,

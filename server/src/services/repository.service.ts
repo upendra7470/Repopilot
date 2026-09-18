@@ -8,9 +8,50 @@ export interface CreateRepositoryInput {
   owner: string;
   name: string;
   fullName: string;
-  description?: string;
+  description?: string | null;
   defaultBranch?: string;
   isPrivate?: boolean;
+  htmlUrl?: string | null;
+  archived?: boolean;
+  fork?: boolean;
+  connectionStatus?: string;
+}
+
+export interface UpdateRepositoryInput {
+  fullName?: string;
+  description?: string | null;
+  defaultBranch?: string;
+  isPrivate?: boolean;
+  htmlUrl?: string | null;
+  archived?: boolean;
+  fork?: boolean;
+  connectionStatus?: string;
+}
+
+export async function updateRepository(id: string, data: UpdateRepositoryInput) {
+  const logger = getLogger();
+  const db = getDb();
+
+  logger.debug({ id }, "Updating repository");
+  const result = await db
+    .update(repositories)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(repositories.id, id))
+    .returning();
+  return result[0] ?? null;
+}
+
+export async function getRepositoryByGithubId(githubId: string) {
+  const logger = getLogger();
+  const db = getDb();
+
+  logger.debug("Fetching repository by GitHub ID");
+  const result = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.githubId, githubId))
+    .limit(1);
+  return result[0] ?? null;
 }
 
 export async function getRepositoryById(id: string) {
@@ -114,6 +155,10 @@ export async function getUserRepositories(userId: string) {
       description: repositories.description,
       defaultBranch: repositories.defaultBranch,
       isPrivate: repositories.isPrivate,
+      htmlUrl: repositories.htmlUrl,
+      archived: repositories.archived,
+      fork: repositories.fork,
+      connectionStatus: repositories.connectionStatus,
       createdAt: repositories.createdAt,
       updatedAt: repositories.updatedAt,
       role: userRepositories.role,

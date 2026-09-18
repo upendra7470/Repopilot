@@ -15,6 +15,13 @@
       "when": 1789730912370,
       "tag": "0001_auth-foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789736502896,
+      "tag": "0002_repo-connection",
+      "breakpoints": true
     }
   ]
 }

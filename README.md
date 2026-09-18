@@ -30,3 +30,36 @@ If you are developing a production application, we recommend enabling type-aware
 ```
 
 See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+
+## RepoPilot Development
+
+RepoPilot runs as two processes in local development:
+
+| Process  | Command            | URL                   |
+| -------- | ------------------ | --------------------- |
+| Frontend | `npm run dev`      | http://localhost:5173 |
+| Backend  | `npm run dev:server` | http://localhost:3001 |
+
+Or start both together:
+
+```sh
+npm run dev:all
+```
+
+The frontend calls the backend at `VITE_API_URL` (default
+`http://localhost:3001`). If the backend is not running, the login page says
+so instead of navigating to a dead URL — start the backend and retry.
+
+### GitHub login (local)
+
+1. Create an OAuth App at GitHub → Settings → Developer settings with:
+   - Homepage URL: `http://localhost:5173`
+   - Authorization callback URL: `http://localhost:3001/api/auth/github/callback`
+2. Copy `.env.example` values into `.env`:
+   - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
+   - `AUTH_SECRET` (any random string, min 32 chars)
+3. Restart the backend, open http://localhost:5173, and sign in with GitHub.
+
+Only identity scopes (`read:user`, `user:email`) are requested. Without
+GitHub credentials, sign-in redirects back to the login page with a setup
+message instead of authenticating.

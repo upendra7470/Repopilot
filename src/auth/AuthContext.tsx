@@ -5,49 +5,58 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type SessionUser } from '../lib/api/client';
+import { ApiError, api, type SessionUser } from '../lib/api/client';
 import { AuthContext, type AuthStatus } from './auth-context';
 
-async function loadSession(): Promise<{
+interface SessionSnapshot {
   status: AuthStatus;
   user: SessionUser | null;
-}> {
+  backendReachable: boolean;
+}
+
+async function loadSession(): Promise<SessionSnapshot> {
   try {
     const session = await api.getSession();
     if (session.authenticated) {
-      return { status: 'authenticated', user: session.user };
+      return { status: 'authenticated', user: session.user, backendReachable: true };
     }
-    return { status: 'unauthenticated', user: null };
-  } catch {
-    // Backend unreachable or invalid state: treat as unauthenticated
-    // rather than failing silently; the login screen is shown instead.
-    return { status: 'unauthenticated', user: null };
+    return { status: 'unauthenticated', user: null, backendReachable: true };
+  } catch (err) {
+    // An HTTP error response means the backend IS reachable (e.g. 500).
+    // Only a network-level failure (connection refused, DNS, CORS-blocked
+    // opaque failure) means the backend cannot be reached at all.
+    const backendReachable = err instanceof ApiError;
+    return { status: 'unauthenticated', user: null, backendReachable };
   }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [backendReachable, setBackendReachable] = useState(true);
+
+  const applySnapshot = useCallback((snapshot: SessionSnapshot) => {
+    setUser(snapshot.user);
+    setStatus(snapshot.status);
+    setBackendReachable(snapshot.backendReachable);
+  }, []);
 
   // Initial session check against the backend (external system sync).
   useEffect(() => {
     let cancelled = false;
     void loadSession().then((result) => {
       if (!cancelled) {
-        setUser(result.user);
-        setStatus(result.status);
+        applySnapshot(result);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySnapshot]);
 
   const refresh = useCallback(async () => {
-    const result = await loadSession();
-    setUser(result.user);
-    setStatus(result.status);
-  }, []);
+    applySnapshot(await loadSession());
+  }, [applySnapshot]);
 
   const logout = useCallback(async () => {
     try {
@@ -61,8 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ status, user, refresh, logout }),
-    [status, user, refresh, logout],
+    () => ({ status, user, backendReachable, refresh, logout }),
+    [status, user, backendReachable, refresh, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

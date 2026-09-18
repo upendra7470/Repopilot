@@ -60,6 +60,35 @@ class ApiClient {
     return `${this.baseUrl}/api/auth/github`;
   }
 
+  /** Backend origin the client talks to (for diagnostics, not secrets). */
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  async discoverRepositories(params?: {
+    query?: string;
+    page?: number;
+    perPage?: number;
+  }): Promise<DiscoveryResult> {
+    const search = new URLSearchParams();
+    if (params?.query) search.set('query', params.query);
+    if (params?.page) search.set('page', String(params.page));
+    if (params?.perPage) search.set('per_page', String(params.perPage));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return this.request<DiscoveryResult>(`/api/github/repositories${suffix}`);
+  }
+
+  async connectRepository(data: { owner: string; name: string }): Promise<ConnectedRepo> {
+    return this.request<ConnectedRepo>('/api/repositories/connect', {
+      method: 'POST',
+      body: data,
+    });
+  }
+
+  async listConnectedRepositories(): Promise<ConnectedRepo[]> {
+    return this.request<ConnectedRepo[]>('/api/repositories');
+  }
+
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -111,6 +140,45 @@ export interface SessionUser {
 export type SessionState =
   | { authenticated: false; user: null }
   | { authenticated: true; user: SessionUser };
+
+/** GitHub repository from discovery (never carries credentials). */
+export interface GithubRepoItem {
+  id: number;
+  owner: string;
+  name: string;
+  fullName: string;
+  description: string | null;
+  isPrivate: boolean;
+  defaultBranch: string;
+  htmlUrl: string;
+  archived: boolean;
+  fork: boolean;
+  updatedAt: string | null;
+  connected: boolean;
+}
+
+export interface DiscoveryResult {
+  data: GithubRepoItem[];
+  pagination: { page: number; perPage: number; total: number };
+}
+
+/** Repository connection owned by the authenticated user. */
+export interface ConnectedRepo {
+  id: string;
+  owner: string;
+  name: string;
+  fullName: string;
+  description: string | null;
+  defaultBranch: string;
+  isPrivate: boolean;
+  githubId: string | null;
+  htmlUrl: string | null;
+  archived: boolean;
+  fork: boolean;
+  connectionStatus: string;
+  role?: string;
+  createdAt: string;
+}
 
 export class ApiError extends Error {
   code: string;
