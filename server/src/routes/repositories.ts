@@ -15,6 +15,12 @@ import {
   AlreadyConnectedError,
   connectRepository,
 } from "../services/github-repos.service.js";
+import {
+  getLatestSyncRun,
+  getRepositorySyncCounts,
+  startRepositorySync,
+  SyncError,
+} from "../services/repo-sync.service.js";
 import { sendGithubError } from "./github-errors.js";
 
 const connectSchema = z.object({
@@ -48,6 +54,22 @@ type CreateRepositoryInput = z.infer<typeof createRepositorySchema>;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Shared error envelope for the sync endpoint's failure statuses. */
+const errorEnvelope = {
+  type: "object",
+  required: ["error"],
+  properties: {
+    error: {
+      type: "object",
+      required: ["code", "message"],
+      properties: {
+        code: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+  },
+} as const;
+
 export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
   app.get("/repositories", {
     preHandler: [requireAuth],
@@ -71,6 +93,9 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
               archived: { type: "boolean" },
               fork: { type: "boolean" },
               connectionStatus: { type: "string" },
+              syncStatus: { type: "string" },
+              lastSyncedAt: { type: ["string", "null"] },
+              lastSuccessfulSyncAt: { type: ["string", "null"] },
               role: { type: "string" },
               createdAt: { type: "string" },
             },
@@ -111,7 +136,32 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             archived: { type: "boolean" },
             fork: { type: "boolean" },
             connectionStatus: { type: "string" },
+            syncStatus: { type: "string" },
+            lastSyncedAt: { type: ["string", "null"] },
+            lastSuccessfulSyncAt: { type: ["string", "null"] },
             createdAt: { type: "string" },
+            sync: {
+              type: "object",
+              required: ["branches", "commits", "files", "contributors"],
+              properties: {
+                branches: { type: "number" },
+                commits: { type: "number" },
+                files: { type: "number" },
+                contributors: { type: "number" },
+                lastRun: {
+                  type: ["object", "null"],
+                  required: ["status", "startedAt"],
+                  properties: {
+                    status: { type: "string" },
+                    stage: { type: ["string", "null"] },
+                    errorCode: { type: ["string", "null"] },
+                    errorMessage: { type: ["string", "null"] },
+                    startedAt: { type: "string" },
+                    finishedAt: { type: ["string", "null"] },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -126,7 +176,79 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
       if (!repo) {
         return reply.notFound("Repository not found");
       }
-      return reply.send(repo);
+      const [counts, lastRun] = await Promise.all([
+        getRepositorySyncCounts(id),
+        getLatestSyncRun(id),
+      ]);
+      return reply.send({
+        ...repo,
+        sync: {
+          ...counts,
+          lastRun: lastRun
+            ? {
+                status: lastRun.status,
+                stage: lastRun.stage,
+                errorCode: lastRun.errorCode,
+                errorMessage: lastRun.errorMessage,
+                startedAt: lastRun.startedAt,
+                finishedAt: lastRun.finishedAt,
+              }
+            : null,
+        },
+      });
+    },
+  });
+
+  app.post("/repositories/:id/sync", {
+    preHandler: [requireAuth, requireRepositoryAccess],
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    schema: {
+      params: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          required: ["runId", "status"],
+          properties: {
+            runId: { type: "string" },
+            status: { type: "string" },
+            branchCount: { type: "number" },
+            commitCount: { type: "number" },
+            fileCount: { type: "number" },
+            contributorCount: { type: "number" },
+            truncatedTree: { type: "boolean" },
+            durationMs: { type: "number" },
+          },
+        },
+        400: errorEnvelope,
+        403: errorEnvelope,
+        404: errorEnvelope,
+        409: errorEnvelope,
+        502: errorEnvelope,
+        503: errorEnvelope,
+      },
+    },
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const summary = await startRepositorySync(request.user!.id, id);
+        return reply.send(summary);
+      } catch (err) {
+        if (err instanceof SyncError) {
+          return reply.status(err.httpStatus).send({
+            error: { code: err.code, message: err.message },
+          });
+        }
+        if (err instanceof GithubApiError) {
+          return sendGithubError(err, reply);
+        }
+        throw err;
+      }
     },
   });
 
@@ -163,6 +285,9 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             archived: { type: "boolean" },
             fork: { type: "boolean" },
             connectionStatus: { type: "string" },
+            syncStatus: { type: "string" },
+            lastSyncedAt: { type: ["string", "null"] },
+            lastSuccessfulSyncAt: { type: ["string", "null"] },
             createdAt: { type: "string" },
           },
         },

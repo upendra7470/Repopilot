@@ -14,6 +14,7 @@ import { ContributorsPage } from './pages/ContributorsPage';
 import { ComponentsPage } from './pages/ComponentsPage';
 import { KnowledgeGraphPage } from './pages/KnowledgeGraphPage';
 import { RepositoryPage } from './pages/RepositoryPage';
+import { RepositoryDetailPage } from './pages/RepositoryDetailPage';
 import { AskRepoPilotPage } from './pages/AskRepoPilotPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="/components" element={<ComponentsPage />} />
             <Route path="/knowledge-graph" element={<KnowledgeGraphPage />} />
             <Route path="/repository" element={<RepositoryPage />} />
+            <Route path="/repository/:id" element={<RepositoryDetailPage />} />
             <Route path="/ask" element={<AskRepoPilotPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

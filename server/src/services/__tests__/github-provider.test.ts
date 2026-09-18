@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  fetchGithubCommitFiles,
+  fetchGithubRepoMetadata,
+  fetchGithubTree,
   getGithubRepository,
+  listGithubBranches,
+  listGithubCommits,
   listGithubRepositories,
   GithubApiError,
   MAX_DISCOVERY_REPOS,
@@ -83,18 +88,44 @@ describe("GitHub repository discovery provider", () => {
     expect(err.status).toBe(401);
   });
 
-  it("detects GitHub rate limiting", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValueOnce(
-        jsonResponse({}, 403, { "x-ratelimit-remaining": "0" }),
-      ),
+  it("detects GitHub rate limiting after retries are exhausted", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({}, 403, { "x-ratelimit-remaining": "0" }),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     const err = await listGithubRepositories("token").catch((e) => e);
     expect(err).toBeInstanceOf(GithubApiError);
     expect(err.status).toBe(429);
     expect(err.rateLimited).toBe(true);
+    // Transient failures are retried (max 3 attempts), never looped forever.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("recovers when a rate limit clears on retry", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({}, 403, { "x-ratelimit-remaining": "0" }),
+      )
+      .mockResolvedValueOnce(jsonResponse([repoJson(7)]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const repos = await listGithubRepositories("token");
+
+    expect(repos).toHaveLength(1);
+    expect(repos[0].id).toBe(7);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry authentication failures", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await listGithubRepositories("token").catch((e) => e);
+    expect(err).toBeInstanceOf(GithubApiError);
+    expect(err.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("maps upstream 404 with status preserved", async () => {
@@ -134,5 +165,162 @@ describe("GitHub repository discovery provider", () => {
 
   it("exposes a sane discovery bound", () => {
     expect(MAX_DISCOVERY_REPOS).toBeLessThanOrEqual(1000);
+  });
+
+  it("fetches branches with protection state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse([
+          { name: "main", commit: { sha: "a".repeat(40) }, protected: true },
+          { name: "dev", commit: { sha: "b".repeat(40) } },
+        ]),
+      ),
+    );
+
+    const branches = await listGithubBranches("token", "o", "r");
+
+    expect(branches).toHaveLength(2);
+    expect(branches[0]).toMatchObject({
+      name: "main",
+      sha: "a".repeat(40),
+      isProtected: true,
+    });
+    expect(branches[1].isProtected).toBe(false);
+  });
+
+  it("fetches commits with author identity and parents", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse([
+          {
+            sha: "c".repeat(40),
+            commit: {
+              message: "feat: x",
+              author: {
+                name: "A U Thor",
+                email: "a@example.com",
+                date: "2026-09-01T10:00:00Z",
+              },
+              committer: {
+                name: "GitHub",
+                email: "noreply@github.com",
+                date: "2026-09-01T10:00:00Z",
+              },
+            },
+            author: { login: "author", id: 101, avatar_url: "https://x/y.png" },
+            committer: null,
+            html_url: "https://github.com/o/r/commit/ccc",
+            parents: [{ sha: "d".repeat(40) }],
+          },
+        ]),
+      ),
+    );
+
+    const commits = await listGithubCommits("token", "o", "r");
+
+    expect(commits).toHaveLength(1);
+    expect(commits[0]).toMatchObject({
+      sha: "c".repeat(40),
+      message: "feat: x",
+      url: "https://github.com/o/r/commit/ccc",
+      parents: ["d".repeat(40)],
+    });
+    expect(commits[0].author).toMatchObject({
+      name: "A U Thor",
+      email: "a@example.com",
+      login: "author",
+      githubId: 101,
+    });
+  });
+
+  it("passes since/sha filters to the commits endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listGithubCommits("token", "o", "r", {
+      sha: "main",
+      since: "2026-09-01T00:00:00.000Z",
+    });
+
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("sha=main");
+    expect(url).toContain("since=2026-09-01");
+  });
+
+  it("fetches a recursive tree with truncation flag", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse({
+          truncated: true,
+          tree: [
+            { path: "README.md", sha: "e".repeat(40), type: "blob", size: 42, mode: "100644" },
+            { path: "src", sha: "f".repeat(40), type: "tree", mode: "040000" },
+          ],
+        }),
+      ),
+    );
+
+    const tree = await fetchGithubTree("token", "o", "r", "abc123");
+
+    expect(tree.truncated).toBe(true);
+    expect(tree.entries).toHaveLength(2);
+    expect(tree.entries[0]).toMatchObject({
+      path: "README.md",
+      type: "blob",
+      size: 42,
+    });
+  });
+
+  it("fetches commit file metadata without patches", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        files: [
+          {
+            filename: "src/index.ts",
+            sha: "1".repeat(40),
+            status: "modified",
+            additions: 10,
+            deletions: 2,
+            patch: "@@ huge diff @@",
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const changed = await fetchGithubCommitFiles("token", "o", "r", "abc");
+
+    expect(changed).toHaveLength(1);
+    expect(changed[0]).toMatchObject({
+      path: "src/index.ts",
+      status: "modified",
+      additions: 10,
+      deletions: 2,
+    });
+    expect(changed[0]).not.toHaveProperty("patch");
+  });
+
+  it("fetches repository metadata for sync", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse({
+          ...repoJson(9, "meta"),
+          default_branch: "develop",
+          updated_at: "2026-09-02T00:00:00Z",
+        }),
+      ),
+    );
+
+    const meta = await fetchGithubRepoMetadata("token", "octocat", "meta");
+
+    expect(meta).toMatchObject({
+      id: 9,
+      defaultBranch: "develop",
+      isPrivate: false,
+    });
   });
 });

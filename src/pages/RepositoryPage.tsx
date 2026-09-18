@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Search,
   Plus,
@@ -19,6 +20,7 @@ import {
   api,
   ApiError,
   type ConnectedRepo,
+  type ConnectedRepoDetail,
   type GithubRepoItem,
 } from '../lib/api/client'
 
@@ -36,40 +38,151 @@ function VisibilityBadge({ isPrivate }: { isPrivate: boolean }) {
   )
 }
 
+function SyncStatusBadge({ status, syncing }: { status: string; syncing: boolean }) {
+  if (syncing || status === 'running') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-info">
+        <LoaderCircle size={12} className="animate-spin" /> Syncing…
+      </span>
+    );
+  }
+  switch (status) {
+    case 'succeeded':
+      return <StatusBadge label="synced" variant="success" />;
+    case 'failed':
+      return <StatusBadge label="sync failed" variant="danger" />;
+    default:
+      return <StatusBadge label="not synced" variant="neutral" />;
+  }
+}
+
+function formatSyncedAt(iso: string | null): string {
+  if (!iso) return 'Never synced';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Never synced';
+  return `Synced ${date.toLocaleString()}`;
+}
+
 function ConnectedRow({ repo }: { repo: ConnectedRepo }) {
+  const navigate = useNavigate();
+  const [detail, setDetail] = useState<ConnectedRepoDetail | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Rich sync state (counts, last run) loads per repository from the backend.
+  useEffect(() => {
+    let cancelled = false;
+    void api.getConnectedRepository(repo.id).then(
+      (loaded) => {
+        if (!cancelled) setDetail(loaded);
+      },
+      () => {
+        if (!cancelled) setDetail(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [repo.id]);
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      await api.syncRepository(repo.id);
+      setDetail(await api.getConnectedRepository(repo.id));
+    } catch (err) {
+      setSyncError(
+        err instanceof ApiError ? err.message : 'Sync failed. Please try again.',
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }, [repo.id]);
+
+  const syncStatus = syncing ? 'running' : (detail?.syncStatus ?? repo.syncStatus);
+  const lastSynced = formatSyncedAt(
+    detail?.lastSuccessfulSyncAt ?? repo.lastSuccessfulSyncAt,
+  );
+  const counts = detail?.sync;
+  const lastRunError =
+    detail?.sync.lastRun?.status === 'failed'
+      ? (detail.sync.lastRun.errorMessage ?? 'Sync failed.')
+      : null;
+
   return (
-    <div className="flex items-center gap-4 rounded-lg border border-border-primary bg-bg-secondary px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-text-primary">
-            {repo.fullName}
-          </span>
-          <StatusBadge label="connected" variant="success" />
-          {repo.archived && <StatusBadge label="archived" variant="warning" />}
-          {repo.fork && (
-            <span className="inline-flex items-center gap-1 text-xs text-text-muted">
-              <GitFork size={12} /> fork
-            </span>
+    <div className="rounded-lg border border-border-primary bg-bg-secondary px-4 py-3">
+      <div className="flex items-center gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate(`/repository/${repo.id}`)}
+              className="truncate text-sm font-medium text-text-primary hover:text-accent transition-colors text-left"
+            >
+              {repo.fullName}
+            </button>
+            <StatusBadge label="connected" variant="success" />
+            {repo.archived && <StatusBadge label="archived" variant="warning" />}
+            {repo.fork && (
+              <span className="inline-flex items-center gap-1 text-xs text-text-muted">
+                <GitFork size={12} /> fork
+              </span>
+            )}
+          </div>
+          {repo.description && (
+            <p className="mt-0.5 truncate text-xs text-text-muted">{repo.description}</p>
           )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+            <VisibilityBadge isPrivate={repo.isPrivate} />
+            <span className="font-mono">{repo.defaultBranch}</span>
+            <SyncStatusBadge status={syncStatus} syncing={syncing} />
+            <span>{lastSynced}</span>
+            {counts && (
+              <span>
+                {counts.branches} branches · {counts.commits} commits ·{' '}
+                {counts.files} files · {counts.contributors} contributors
+              </span>
+            )}
+          </div>
         </div>
-        {repo.description && (
-          <p className="mt-0.5 truncate text-xs text-text-muted">{repo.description}</p>
-        )}
-        <div className="mt-1 flex items-center gap-3 text-xs text-text-muted">
-          <VisibilityBadge isPrivate={repo.isPrivate} />
-          <span className="font-mono">{repo.defaultBranch}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          {repo.htmlUrl && (
+            <a
+              href={repo.htmlUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
+              aria-label={`Open ${repo.fullName} on GitHub`}
+            >
+              <ExternalLink size={14} />
+            </a>
+          )}
+          <button
+            onClick={() => void handleSync()}
+            disabled={syncing}
+            className={clsx(
+              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              'bg-accent/15 text-accent hover:bg-accent/25',
+              'disabled:opacity-50 disabled:cursor-wait'
+            )}
+          >
+            {syncing ? (
+              <span className="inline-flex items-center gap-1.5">
+                <LoaderCircle size={12} className="animate-spin" /> Syncing…
+              </span>
+            ) : (
+              'Sync'
+            )}
+          </button>
         </div>
       </div>
-      {repo.htmlUrl && (
-        <a
-          href={repo.htmlUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
-          aria-label={`Open ${repo.fullName} on GitHub`}
+      {(syncError ?? lastRunError) && (
+        <div
+          role="alert"
+          className="mt-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs text-danger"
         >
-          <ExternalLink size={14} />
-        </a>
+          {syncError ?? lastRunError}
+        </div>
       )}
     </div>
   );
@@ -374,7 +487,7 @@ export function RepositoryPage() {
           <EmptyState
             icon={<GitFork size={24} />}
             title="No repositories connected"
-            description="Connect a GitHub repository to start building your engineering memory. Ingestion arrives in Phase 5."
+            description="Connect a GitHub repository, then sync it to start building your engineering memory."
             action={
               <button
                 onClick={handleTogglePicker}

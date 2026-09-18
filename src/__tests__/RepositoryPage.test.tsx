@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { RepositoryPage } from '../pages/RepositoryPage';
 
 interface MockRoute {
   match: (url: string, method: string) => boolean;
   respond: () => unknown;
+}
+
+interface HttpError {
+  __httpError: { status: number; body: unknown };
 }
 
 function mockFetch(routes: MockRoute[]) {
@@ -14,10 +19,23 @@ function mockFetch(routes: MockRoute[]) {
     if (!route) {
       return Promise.reject(new Error(`unexpected fetch: ${method} ${url}`));
     }
+    const payload = route.respond() as unknown;
+    if (
+      typeof payload === 'object' &&
+      payload !== null &&
+      '__httpError' in payload
+    ) {
+      const { status, body } = (payload as HttpError).__httpError;
+      return Promise.resolve({
+        ok: false,
+        status,
+        json: () => Promise.resolve(body),
+      });
+    }
     return Promise.resolve({
       ok: true,
       status: 200,
-      json: () => Promise.resolve(route.respond()),
+      json: () => Promise.resolve(payload),
     });
   });
 }
@@ -35,8 +53,29 @@ const connectedRepo = {
   archived: false,
   fork: false,
   connectionStatus: 'connected',
+  syncStatus: 'succeeded',
+  lastSyncedAt: '2026-09-02T00:00:00.000Z',
+  lastSuccessfulSyncAt: '2026-09-02T00:00:00.000Z',
   role: 'owner',
   createdAt: '2026-09-01T00:00:00.000Z',
+};
+
+const repoDetail = {
+  ...connectedRepo,
+  sync: {
+    branches: 3,
+    commits: 120,
+    files: 45,
+    contributors: 4,
+    lastRun: {
+      status: 'succeeded',
+      stage: 'done',
+      errorCode: null,
+      errorMessage: null,
+      startedAt: '2026-09-02T00:00:00.000Z',
+      finishedAt: '2026-09-02T00:01:00.000Z',
+    },
+  },
 };
 
 const discoveredRepo = {
@@ -58,12 +97,51 @@ function baseRoutes(overrides?: {
   connected?: unknown[];
   discovered?: typeof discoveredRepo[];
   total?: number;
+  detail?: unknown;
+  syncResult?: unknown;
+  syncError?: { status: number; code: string; message: string };
 }) {
   return mockFetch([
     {
       match: (url, method) =>
         method === 'GET' && url.endsWith('/api/repositories'),
       respond: () => overrides?.connected ?? [connectedRepo],
+    },
+    {
+      match: (url, method) =>
+        method === 'GET' && /\/api\/repositories\/.+/.test(url),
+      respond: () => overrides?.detail ?? repoDetail,
+    },
+    {
+      match: (url, method) =>
+        method === 'POST' && /\/api\/repositories\/.+\/sync/.test(url),
+      respond: () => {
+        if (overrides?.syncError) {
+          return {
+            __httpError: {
+              status: overrides.syncError.status,
+              body: {
+                error: {
+                  code: overrides.syncError.code,
+                  message: overrides.syncError.message,
+                },
+              },
+            },
+          };
+        }
+        return (
+          overrides?.syncResult ?? {
+            runId: 'run-1',
+            status: 'succeeded',
+            branchCount: 3,
+            commitCount: 120,
+            fileCount: 45,
+            contributorCount: 4,
+            truncatedTree: false,
+            durationMs: 1500,
+          }
+        );
+      },
     },
     {
       match: (url, method) =>
@@ -94,7 +172,11 @@ describe('RepositoryPage connection flow', () => {
 
   it('lists connected repositories from the real API', async () => {
     vi.stubGlobal('fetch', baseRoutes());
-    render(<RepositoryPage />);
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('octocat/hello-world')).toBeInTheDocument();
     expect(screen.getByText('connected')).toBeInTheDocument();
@@ -103,7 +185,11 @@ describe('RepositoryPage connection flow', () => {
 
   it('shows an empty state with a connect action when nothing is connected', async () => {
     vi.stubGlobal('fetch', baseRoutes({ connected: [] }));
-    render(<RepositoryPage />);
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('No repositories connected')).toBeInTheDocument();
     fireEvent.click(
@@ -117,7 +203,11 @@ describe('RepositoryPage connection flow', () => {
 
   it('searches GitHub repositories and connects one', async () => {
     vi.stubGlobal('fetch', baseRoutes({ connected: [] }));
-    render(<RepositoryPage />);
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: /connect repository/i }));
     const search = await screen.findByPlaceholderText(
@@ -156,7 +246,11 @@ describe('RepositoryPage connection flow', () => {
       });
     });
     vi.stubGlobal('fetch', failing);
-    render(<RepositoryPage />);
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: /connect repository/i }));
 
@@ -166,12 +260,60 @@ describe('RepositoryPage connection flow', () => {
     expect(screen.getByText('GitHub credential is invalid')).toBeInTheDocument();
   });
 
+  it('shows real sync counts and runs a sync', async () => {
+    vi.stubGlobal('fetch', baseRoutes());
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(/3 branches/)).toBeInTheDocument();
+    expect(screen.getByText(/120 commits/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sync' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Syncing…')).not.toBeInTheDocument();
+    });
+    // Counts refresh from the reloaded detail after sync.
+    expect(await screen.findByText(/45 files/)).toBeInTheDocument();
+  });
+
+  it('shows sync failure without fake data', async () => {
+    vi.stubGlobal(
+      'fetch',
+      baseRoutes({
+        syncError: {
+          status: 429,
+          code: 'GITHUB_RATE_LIMITED',
+          message: 'GitHub rate limit exceeded — try again shortly.',
+        },
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Sync' }));
+
+    expect(
+      await screen.findByText('GitHub rate limit exceeded — try again shortly.'),
+    ).toBeInTheDocument();
+  });
+
   it('shows a loading state while connected repositories load', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockImplementation(() => new Promise(() => {})),
     );
-    const { container } = render(<RepositoryPage />);
+    const { container } = render(
+      <MemoryRouter>
+        <RepositoryPage />
+      </MemoryRouter>,
+    );
 
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
   });

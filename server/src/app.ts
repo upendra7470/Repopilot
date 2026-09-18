@@ -13,6 +13,7 @@ import { requestLogger } from "./middleware/request-logger.js";
 import { healthRoutes } from "./routes/health.js";
 import { authRoutes, GITHUB_OAUTH_SCOPES } from "./routes/auth.js";
 import { githubRoutes } from "./routes/github.js";
+import { memoryRoutes } from "./routes/memory.js";
 import { userRoutes } from "./routes/users.js";
 import { repositoryRoutes } from "./routes/repositories.js";
 import "./types/fastify.js";
@@ -101,6 +102,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: "/api" });
   await app.register(githubRoutes, { prefix: "/api" });
+  await app.register(memoryRoutes, { prefix: "/api" });
   await app.register(userRoutes, { prefix: "/api" });
   await app.register(repositoryRoutes, { prefix: "/api" });
 

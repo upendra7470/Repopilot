@@ -89,6 +89,48 @@ class ApiClient {
     return this.request<ConnectedRepo[]>('/api/repositories');
   }
 
+  async getConnectedRepository(id: string): Promise<ConnectedRepoDetail> {
+    return this.request<ConnectedRepoDetail>(`/api/repositories/${id}`);
+  }
+
+  async syncRepository(id: string): Promise<SyncResult> {
+    return this.request<SyncResult>(`/api/repositories/${id}/sync`, {
+      method: 'POST',
+    });
+  }
+
+  async getMemoryOverview(id: string): Promise<MemoryOverview> {
+    return this.request<MemoryOverview>(`/api/repositories/${id}/memory`);
+  }
+
+  async getTimeline(id: string, limit?: number): Promise<ActivityEvent[]> {
+    const suffix = limit ? `?limit=${limit}` : '';
+    return this.request<ActivityEvent[]>(`/api/repositories/${id}/timeline${suffix}`);
+  }
+
+  async listRepoFiles(id: string): Promise<RepoFileItem[]> {
+    return this.request<RepoFileItem[]>(`/api/repositories/${id}/files?limit=5000`);
+  }
+
+  async getFileHistory(id: string, fileId: string): Promise<FileHistory> {
+    return this.request<FileHistory>(`/api/repositories/${id}/files/${fileId}/history`);
+  }
+
+  async listRepoContributors(id: string): Promise<ContributorSummary[]> {
+    return this.request<ContributorSummary[]>(`/api/repositories/${id}/contributors`);
+  }
+
+  async getRepoContributor(id: string, contributorId: string): Promise<ContributorDetail> {
+    return this.request<ContributorDetail>(
+      `/api/repositories/${id}/contributors/${contributorId}`,
+    );
+  }
+
+  async searchMemory(id: string, query: string): Promise<MemorySearchResult> {
+    const params = new URLSearchParams({ q: query });
+    return this.request<MemorySearchResult>(`/api/repositories/${id}/activity?${params.toString()}`);
+  }
+
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -176,8 +218,124 @@ export interface ConnectedRepo {
   archived: boolean;
   fork: boolean;
   connectionStatus: string;
+  syncStatus: string;
+  lastSyncedAt: string | null;
+  lastSuccessfulSyncAt: string | null;
   role?: string;
   createdAt: string;
+}
+
+export interface SyncRunInfo {
+  status: string;
+  stage: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface RepoSyncState {
+  branches: number;
+  commits: number;
+  files: number;
+  contributors: number;
+  lastRun: SyncRunInfo | null;
+}
+
+export interface ConnectedRepoDetail extends ConnectedRepo {
+  sync: RepoSyncState;
+}
+
+export interface SyncResult {
+  runId: string;
+  status: string;
+  branchCount: number;
+  commitCount: number;
+  fileCount: number;
+  contributorCount: number;
+  truncatedTree: boolean;
+  durationMs: number;
+}
+
+export interface ActivityEvent {
+  kind: string;
+  sha: string | null;
+  title: string;
+  authorLogin: string | null;
+  at: string | null;
+}
+
+export interface ChangedFileStat {
+  path: string;
+  changes: number;
+  contributors: number;
+  additions: number;
+  deletions: number;
+}
+
+export interface ContributorSummary {
+  id: string;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  commitCount: number;
+  lastCommitAt: string | null;
+}
+
+export interface ContributorDetail {
+  contributor: {
+    id: string;
+    login: string;
+    name: string | null;
+    email: string | null;
+    avatarUrl: string | null;
+  };
+  commitCount: number;
+  filesTouched: number;
+  firstCommitAt: string | null;
+  lastCommitAt: string | null;
+  frequentAreas: Array<{ area: string; changes: number }>;
+  recentCommits: Array<{ sha: string; message: string | null; committedAt: string | null }>;
+}
+
+export interface FileHistoryEntry {
+  sha: string | null;
+  message: string | null;
+  authorLogin: string | null;
+  committedAt: string | null;
+  status: string | null;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface FileHistory {
+  file: { id: string; path: string; type: string | null; size: number | null; sha: string | null };
+  changeCount: number;
+  contributors: Array<{ login: string; changes: number }>;
+  latestChange: FileHistoryEntry | null;
+  history: FileHistoryEntry[];
+}
+
+export interface MemoryOverview {
+  counts: { branches: number; commits: number; files: number; contributors: number };
+  recentActivity: ActivityEvent[];
+  frequentlyChangedFiles: ChangedFileStat[];
+  activeContributors: ContributorSummary[];
+  areas: Array<{ area: string; files: number; changes: number }>;
+}
+
+export interface RepoFileItem {
+  id: string;
+  path: string;
+  type: string | null;
+  size: number | null;
+  sha: string | null;
+}
+
+export interface MemorySearchResult {
+  files: RepoFileItem[];
+  commits: Array<{ sha: string; message: string | null; authorLogin: string | null; committedAt: string | null }>;
+  contributors: Array<{ id: string; login: string; name: string | null }>;
 }
 
 export class ApiError extends Error {

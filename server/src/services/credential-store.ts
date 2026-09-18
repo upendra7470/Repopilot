@@ -98,6 +98,33 @@ export async function getGithubCredential(
   });
 }
 
+/** The OAuth scopes granted to the stored credential (space-separated). */
+export async function getGithubScope(userId: string): Promise<string | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ scope: oauthAccounts.scope })
+    .from(oauthAccounts)
+    .where(
+      and(
+        eq(oauthAccounts.userId, userId),
+        eq(oauthAccounts.provider, GITHUB_PROVIDER),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.scope ?? null;
+}
+
+/** Whether the stored credential grants classic `repo` scope. */
+export async function githubTokenHasRepoScope(
+  userId: string,
+): Promise<boolean> {
+  const scope = await getGithubScope(userId);
+  if (!scope) {
+    return false;
+  }
+  return scope.split(/[,\s]+/).includes("repo");
+}
+
 /** Whether a GitHub credential exists, without revealing it. */
 export async function hasGithubCredential(userId: string): Promise<boolean> {
   const db = getDb();

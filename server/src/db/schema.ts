@@ -7,6 +7,8 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  integer,
+  json,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable(
@@ -46,6 +48,11 @@ export const repositories = pgTable(
     connectionStatus: varchar("connection_status", { length: 20 })
       .default("connected")
       .notNull(),
+    syncStatus: varchar("sync_status", { length: 20 })
+      .default("idle")
+      .notNull(),
+    lastSyncedAt: timestamp("last_synced_at"),
+    lastSuccessfulSyncAt: timestamp("last_successful_sync_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -147,3 +154,200 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type OAuthAccount = typeof oauthAccounts.$inferSelect;
 export type NewOAuthAccount = typeof oauthAccounts.$inferInsert;
+
+/**
+ * Branch state snapshot (Phase 5 ingestion).
+ *
+ * Branches are mutable pointers: re-sync updates the row in place keyed by
+ * (repositoryId, name), never inserting duplicates.
+ */
+export const branches = pgTable(
+  "branches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    sha: varchar("sha", { length: 40 }),
+    protected: boolean("protected").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("branches_repo_name_idx").on(table.repositoryId, table.name),
+    index("branches_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Contributors derived from repository activity (Phase 5 ingestion).
+ *
+ * Identity is keyed by stable GitHub user ID when available, falling back
+ * to login. Unknown/anonymous authors are represented on the commit row
+ * itself (name/email) without a contributor row when no login exists.
+ */
+export const contributors = pgTable(
+  "contributors",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }),
+    login: varchar("login", { length: 255 }).notNull(),
+    name: varchar("name", { length: 255 }),
+    email: varchar("email", { length: 255 }),
+    avatarUrl: text("avatar_url"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("contributors_repo_github_idx").on(
+      table.repositoryId,
+      table.githubId,
+    ),
+    uniqueIndex("contributors_repo_login_idx").on(
+      table.repositoryId,
+      table.login,
+    ),
+    index("contributors_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Commit history (Phase 5 ingestion). The GitHub commit SHA is the stable
+ * external identity; (repositoryId, sha) uniqueness makes re-syncs safe.
+ */
+export const commits = pgTable(
+  "commits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    sha: varchar("sha", { length: 40 }).notNull(),
+    message: text("message"),
+    authorName: varchar("author_name", { length: 255 }),
+    authorEmail: varchar("author_email", { length: 255 }),
+    authorLogin: varchar("author_login", { length: 255 }),
+    authorGithubId: varchar("author_github_id", { length: 255 }),
+    committerName: varchar("committer_name", { length: 255 }),
+    committerEmail: varchar("committer_email", { length: 255 }),
+    committerLogin: varchar("committer_login", { length: 255 }),
+    contributorId: uuid("contributor_id").references(() => contributors.id, {
+      onDelete: "set null",
+    }),
+    authoredAt: timestamp("authored_at"),
+    committedAt: timestamp("committed_at"),
+    url: text("url"),
+    parentShas: json("parent_shas").$type<string[]>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("commits_repo_sha_idx").on(table.repositoryId, table.sha),
+    index("commits_repo_idx").on(table.repositoryId),
+    index("commits_contributor_idx").on(table.contributorId),
+  ],
+);
+
+/**
+ * File-tree snapshot per ref (Phase 5 ingestion). Current structure only;
+ * history is reconstructed through commit_files. Metadata only — file
+ * contents are never fetched or stored.
+ */
+export const files = pgTable(
+  "files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    ref: varchar("ref", { length: 255 }).notNull(),
+    path: text("path").notNull(),
+    sha: varchar("sha", { length: 100 }),
+    type: varchar("type", { length: 20 }),
+    size: integer("size"),
+    mode: varchar("mode", { length: 20 }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("files_repo_ref_path_idx").on(
+      table.repositoryId,
+      table.ref,
+      table.path,
+    ),
+    index("files_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Commit ↔ changed-file relationship (Phase 5 ingestion). Metadata only:
+ * status plus line-change counts from the commit detail endpoint. No diffs,
+ * no patches, no source code.
+ */
+export const commitFiles = pgTable(
+  "commit_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    commitId: uuid("commit_id")
+      .references(() => commits.id, { onDelete: "cascade" })
+      .notNull(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    path: text("path").notNull(),
+    sha: varchar("sha", { length: 100 }),
+    status: varchar("status", { length: 20 }),
+    additions: integer("additions"),
+    deletions: integer("deletions"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("commit_files_commit_path_idx").on(table.commitId, table.path),
+    index("commit_files_commit_idx").on(table.commitId),
+    index("commit_files_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Sync execution record (Phase 5 ingestion). Exactly one RUNNING row per
+ * repository is enforced by a partial unique index (see migration SQL:
+ * drizzle-kit cannot express partial unique indexes, so it is declared in
+ * raw SQL alongside the generated migration).
+ */
+export const syncRuns = pgTable(
+  "sync_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    stage: varchar("stage", { length: 50 }),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    branchCount: integer("branch_count").default(0).notNull(),
+    commitCount: integer("commit_count").default(0).notNull(),
+    fileCount: integer("file_count").default(0).notNull(),
+    contributorCount: integer("contributor_count").default(0).notNull(),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [index("sync_runs_repo_idx").on(table.repositoryId)],
+);
+
+export type Branch = typeof branches.$inferSelect;
+export type NewBranch = typeof branches.$inferInsert;
+export type Contributor = typeof contributors.$inferSelect;
+export type NewContributor = typeof contributors.$inferInsert;
+export type Commit = typeof commits.$inferSelect;
+export type NewCommit = typeof commits.$inferInsert;
+export type RepoFile = typeof files.$inferSelect;
+export type NewRepoFile = typeof files.$inferInsert;
+export type CommitFile = typeof commitFiles.$inferSelect;
+export type NewCommitFile = typeof commitFiles.$inferInsert;
+export type SyncRun = typeof syncRuns.$inferSelect;
+export type NewSyncRun = typeof syncRuns.$inferInsert;
