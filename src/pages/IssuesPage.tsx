@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -400,6 +400,8 @@ export function IssuesPage() {
   const [page, setPage] = useState<IssueListPage | null>(null);
   const [issuesError, setIssuesError] = useState<string | null>(null);
   const [selectedNumber, setSelectedNumber] = useState<number | null>(null);
+  // Late detail responses for a deselected entity must not overwrite state.
+  const selectedNumberRef = useRef<number | null>(null);
   const [detail, setDetail] = useState<IssueDetail | null>(null);
   const [intelligence, setIntelligence] = useState<IssueIntelligence | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -480,6 +482,7 @@ export function IssuesPage() {
 
   const clearSelection = useCallback(() => {
     setSelectedNumber(null);
+    selectedNumberRef.current = null;
     setDetail(null);
     setIntelligence(null);
     setDetailError(null);
@@ -513,6 +516,7 @@ export function IssuesPage() {
     async (issueNumber: number) => {
       if (!effectiveId) return;
       setSelectedNumber(issueNumber);
+      selectedNumberRef.current = issueNumber;
       setDetailError(null);
       setDetailLoading(true);
       try {
@@ -520,16 +524,21 @@ export function IssuesPage() {
           api.getIssue(effectiveId, issueNumber),
           api.getIssueIntelligence(effectiveId, issueNumber),
         ]);
+        // Late responses for a deselected issue must not overwrite the current one.
+        if (selectedNumberRef.current !== issueNumber) return;
         setDetail(loadedDetail);
         setIntelligence(loadedIntel);
       } catch (err) {
+        if (selectedNumberRef.current !== issueNumber) return;
         setDetail(null);
         setIntelligence(null);
         setDetailError(
           err instanceof ApiError ? err.message : 'Failed to load issue.',
         );
       } finally {
-        setDetailLoading(false);
+        if (selectedNumberRef.current === issueNumber) {
+          setDetailLoading(false);
+        }
       }
     },
     [effectiveId],

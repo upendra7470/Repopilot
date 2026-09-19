@@ -2,10 +2,14 @@ import { and, count, desc, eq, ilike, max, or, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   branches,
+  ciRuns,
+  ciWorkflows,
   commits,
   commitFiles,
   contributors,
   files,
+  issues,
+  pullRequests,
 } from "../db/schema.js";
 import { getLogger } from "../utils/logger.js";
 
@@ -607,4 +611,147 @@ export async function getFilesChangedByContributor(
   return [...counts.entries()]
     .map(([path, changes]) => ({ path, changes }))
     .sort((a, b) => b.changes - a.changes);
+}
+
+export interface TimelineRef {
+  entity: "commit" | "pr" | "issue" | "run";
+  /** commit SHA, PR/issue number, or run GitHub ID. */
+  value: string;
+}
+
+export interface TimelineItem {
+  kind: "commit" | "pr" | "issue" | "ci_run";
+  at: Date | null;
+  title: string;
+  subtitle: string | null;
+  authorLogin: string | null;
+  /** Current state (commit message n/a): PR state, issue state, run conclusion. */
+  state: string | null;
+  ref: TimelineRef;
+  workflowName: string | null;
+}
+
+/**
+ * Engineering timeline (Phase 10.1): one chronological stream across
+ * commits, PRs, issues, and CI runs. Every item carries its entity
+ * reference so the UI can navigate to the real investigation surface.
+ * Titles are neutral noun phrases with observed state — verbs like
+ * "opened" are never invented (only `merged` is certain from the record).
+ */
+export async function getEngineeringTimeline(
+  repositoryId: string,
+  limit = 30,
+): Promise<TimelineItem[]> {
+  const db = getDb();
+  const safeLimit = Math.min(Math.max(1, limit), 100);
+  const perKind = Math.min(Math.max(10, safeLimit), 50);
+
+  const [commitRows, prRows, issueRows, runRows, workflowRows] = await Promise.all([
+    db
+      .select({
+        sha: commits.sha,
+        message: commits.message,
+        authorLogin: commits.authorLogin,
+        committedAt: commits.committedAt,
+      })
+      .from(commits)
+      .where(eq(commits.repositoryId, repositoryId))
+      .orderBy(desc(commits.committedAt))
+      .limit(perKind),
+    db
+      .select({
+        number: pullRequests.number,
+        title: pullRequests.title,
+        state: pullRequests.state,
+        merged: pullRequests.merged,
+        authorLogin: pullRequests.authorLogin,
+        githubUpdatedAt: pullRequests.githubUpdatedAt,
+      })
+      .from(pullRequests)
+      .where(eq(pullRequests.repositoryId, repositoryId))
+      .orderBy(desc(pullRequests.githubUpdatedAt))
+      .limit(perKind),
+    db
+      .select({
+        number: issues.number,
+        title: issues.title,
+        state: issues.state,
+        authorLogin: issues.authorLogin,
+        githubUpdatedAt: issues.githubUpdatedAt,
+      })
+      .from(issues)
+      .where(eq(issues.repositoryId, repositoryId))
+      .orderBy(desc(issues.githubUpdatedAt))
+      .limit(perKind),
+    db
+      .select({
+        githubId: ciRuns.githubId,
+        runNumber: ciRuns.runNumber,
+        status: ciRuns.status,
+        conclusion: ciRuns.conclusion,
+        headBranch: ciRuns.headBranch,
+        workflowId: ciRuns.workflowId,
+        githubCreatedAt: ciRuns.githubCreatedAt,
+      })
+      .from(ciRuns)
+      .where(eq(ciRuns.repositoryId, repositoryId))
+      .orderBy(desc(ciRuns.githubCreatedAt))
+      .limit(perKind),
+    db
+      .select({ id: ciWorkflows.id, name: ciWorkflows.name })
+      .from(ciWorkflows)
+      .where(eq(ciWorkflows.repositoryId, repositoryId)),
+  ]);
+  const workflowNameById = new Map(workflowRows.map((w) => [w.id, w.name]));
+
+  const items: TimelineItem[] = [
+    ...commitRows.map((c): TimelineItem => ({
+      kind: "commit",
+      at: c.committedAt,
+      title: (c.message ?? "(no message)").split("\n")[0],
+      subtitle: c.sha.slice(0, 7),
+      authorLogin: c.authorLogin,
+      state: null,
+      ref: { entity: "commit", value: c.sha },
+      workflowName: null,
+    })),
+    ...prRows.map((pr): TimelineItem => ({
+      kind: "pr",
+      at: pr.githubUpdatedAt,
+      title: `PR #${pr.number} · ${pr.title ?? "(no title)"}`,
+      subtitle: pr.merged ? "merged" : pr.state,
+      authorLogin: pr.authorLogin,
+      state: pr.merged ? "merged" : pr.state,
+      ref: { entity: "pr", value: String(pr.number) },
+      workflowName: null,
+    })),
+    ...issueRows.map((issue): TimelineItem => ({
+      kind: "issue",
+      at: issue.githubUpdatedAt,
+      title: `Issue #${issue.number} · ${issue.title ?? "(no title)"}`,
+      subtitle: issue.state,
+      authorLogin: issue.authorLogin,
+      state: issue.state,
+      ref: { entity: "issue", value: String(issue.number) },
+      workflowName: null,
+    })),
+    ...runRows.map((run): TimelineItem => ({
+      kind: "ci_run",
+      at: run.githubCreatedAt,
+      title: `${workflowNameById.get(run.workflowId) ?? "Workflow"} #${run.runNumber ?? run.githubId}`,
+      subtitle: run.status === "completed" ? (run.conclusion ?? "completed") : (run.status ?? "running"),
+      authorLogin: null,
+      state: run.status === "completed" ? run.conclusion : run.status,
+      ref: { entity: "run", value: run.githubId },
+      workflowName: workflowNameById.get(run.workflowId) ?? null,
+    })),
+  ];
+
+  const timeOf = (at: Date | null): number => {
+    const ms = at?.getTime() ?? Number.NaN;
+    return Number.isNaN(ms) ? -1 : ms;
+  };
+  return items
+    .sort((a, b) => timeOf(b.at) - timeOf(a.at))
+    .slice(0, safeLimit);
 }

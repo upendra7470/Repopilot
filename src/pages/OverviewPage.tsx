@@ -1,230 +1,457 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
-  Bug,
-  CheckCircle2,
   GitPullRequest,
-  Shield,
-  TrendingDown,
-  TrendingUp,
-  Zap,
+  GitCommit,
+  Bug,
+  Activity,
   ShieldAlert,
-} from 'lucide-react'
-import clsx from 'clsx'
-import { Metric } from '../components/ui/Metric'
-import { SectionHeader } from '../components/ui/SectionHeader'
-import { EntityRow } from '../components/ui/EntityRow'
-import { StatusBadge } from '../components/ui/StatusBadge'
-import { RiskBadge } from '../components/ui/RiskBadge'
+  FileText,
+  Users,
+} from 'lucide-react';
+import clsx from 'clsx';
+import { LoadingState } from '../components/ui/LoadingState';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorState } from '../components/ui/ErrorState';
+import { Panel } from '../components/ui/Panel';
+import { StatusBadge } from '../components/ui/StatusBadge';
+import { RepoContextHeader } from '../components/repo/RepoContextHeader';
 import {
-  demoTimeline,
-  demoRiskOverview,
-  demoEngineeringHealth,
-  demoPullRequests,
-  demoIssues,
-  demoIncidents,
-} from '../data/demo'
+  api,
+  ApiError,
+  type ConnectedRepo,
+  type RepositoryOverview,
+  type TimelineItem,
+} from '../lib/api/client';
 
-const timelineIcons: Record<string, React.ReactNode> = {
-  deploy: <CheckCircle2 size={14} className="text-success" />,
-  pr: <GitPullRequest size={14} className="text-accent" />,
-  'ci-failure': <AlertTriangle size={14} className="text-danger" />,
-  issue: <Bug size={14} className="text-warning" />,
-  incident: <Zap size={14} className="text-danger" />,
-  release: <CheckCircle2 size={14} className="text-success" />,
-  security: <Shield size={14} className="text-info" />,
+function ageOf(iso: string | null): string {
+  if (!iso) return '—';
+  const at = new Date(iso).getTime();
+  if (Number.isNaN(at)) return '—';
+  const mins = Math.floor((Date.now() - at) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '1d ago' : `${days}d ago`;
 }
 
-const severityColors: Record<string, string> = {
-  critical: 'bg-danger',
-  warning: 'bg-warning',
-  success: 'bg-success',
-  info: 'bg-info',
-}
+const ATTENTION_DOT: Record<string, string> = {
+  critical: 'bg-risk-critical',
+  high: 'bg-risk-high',
+  medium: 'bg-risk-medium',
+  low: 'bg-risk-low',
+};
 
-function formatTimestamp(ts: string) {
-  const d = new Date(ts)
-  const now = new Date()
-  const diffH = Math.round((now.getTime() - d.getTime()) / 3600000)
-  if (diffH < 1) return 'Just now'
-  if (diffH < 24) return `${diffH}h ago`
-  return `${Math.round(diffH / 24)}d ago`
+const EVENT_ICON: Record<TimelineItem['kind'], React.ReactNode> = {
+  commit: <GitCommit size={13} className="text-text-muted" />,
+  pr: <GitPullRequest size={13} className="text-accent" />,
+  issue: <Bug size={13} className="text-warning" />,
+  ci_run: <Activity size={13} className="text-info" />,
+};
+
+function eventHref(repositoryId: string, item: TimelineItem): string {
+  switch (item.ref.entity) {
+    case 'pr':
+      return `/pull-requests?repositoryId=${repositoryId}`;
+    case 'issue':
+      return `/issues?repositoryId=${repositoryId}`;
+    case 'run':
+      return `/ci-cd?repositoryId=${repositoryId}`;
+    case 'commit':
+    default:
+      return `/repository/${repositoryId}?tab=timeline`;
+  }
 }
 
 export function OverviewPage() {
-  const health = demoEngineeringHealth
-  const risk = demoRiskOverview
-  const openPRs = demoPullRequests.filter((pr) => pr.state === 'open')
-  const openIssues = demoIssues.filter((i) => i.state !== 'closed')
-  const activeIncidents = demoIncidents.filter((i) => i.status !== 'resolved' && i.status !== 'closed')
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [repos, setRepos] = useState<ConnectedRepo[] | null>(null);
+  const [reposError, setReposError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    searchParams.get('repositoryId'),
+  );
+  const [overview, setOverview] = useState<RepositoryOverview | null>(null);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  // Monotonic request id: a late response for a previous repository must
+  // never overwrite the current one (A → B → A safety).
+  const requestRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.listConnectedRepositories().then(
+      (list) => {
+        if (!cancelled) {
+          setRepos(list);
+          setReposError(null);
+        }
+      },
+      (err: unknown) => {
+        if (!cancelled) {
+          setRepos([]);
+          setReposError(
+            err instanceof ApiError ? err.message : 'Failed to load repositories.',
+          );
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const effectiveId = useMemo(() => {
+    if (selectedId) return selectedId;
+    if (repos && repos.length > 0) return repos[0].id;
+    return null;
+  }, [selectedId, repos]);
+
+  const effectiveRepo = useMemo(
+    () => repos?.find((r) => r.id === effectiveId) ?? null,
+    [repos, effectiveId],
+  );
+
+  const loadOverview = useCallback(async (repositoryId: string) => {
+    const requestId = (requestRef.current += 1);
+    try {
+      setOverviewError(null);
+      const loaded = await api.getRepositoryOverview(repositoryId);
+      if (requestRef.current === requestId) {
+        setOverview(loaded);
+      }
+    } catch (err) {
+      if (requestRef.current === requestId) {
+        setOverview(null);
+        setOverviewError(err instanceof ApiError ? err.message : 'Failed to load overview.');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!effectiveId) return;
+    const requestId = (requestRef.current += 1);
+    let cancelled = false;
+    void api.getRepositoryOverview(effectiveId).then(
+      (loaded) => {
+        if (!cancelled && requestRef.current === requestId) {
+          setOverview(loaded);
+          setOverviewError(null);
+        }
+      },
+      (err: unknown) => {
+        if (!cancelled && requestRef.current === requestId) {
+          setOverview(null);
+          setOverviewError(
+            err instanceof ApiError ? err.message : 'Failed to load overview.',
+          );
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveId]);
+
+  const handleSelectRepo = useCallback(
+    (repositoryId: string) => {
+      setSelectedId(repositoryId);
+      setOverview(null);
+      setOverviewError(null);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('repositoryId', repositoryId);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div>
-        <h1 className="text-xl font-semibold text-text-primary">Engineering Overview</h1>
-        <p className="text-sm text-text-secondary">What's happening across your engineering organization</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Command center
+        </p>
+        <h1 className="mt-0.5 text-lg font-semibold tracking-tight text-text-primary">
+          Engineering Overview
+        </h1>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric
-          label="Overall Health"
-          value={`${health.overallScore}%`}
-          trend={health.trends.codeQuality === 'improving' ? 'up' : health.trends.codeQuality === 'degrading' ? 'down' : 'neutral'}
-          trendValue="vs last week"
+      {repos === null ? (
+        <LoadingState type="dashboard" />
+      ) : reposError ? (
+        <ErrorState
+          title="Could not load repositories"
+          message={reposError}
+          onRetry={() => window.location.reload()}
         />
-        <Metric
-          label="Active PRs"
-          value={openPRs.length}
-          trend="up"
-          trendValue="+2 this week"
+      ) : repos.length === 0 ? (
+        <EmptyState
+          icon={<ShieldAlert size={18} />}
+          title="No connected repositories"
+          description="Connect a GitHub repository and sync it. Overview is built from synced repository data — nothing here is fabricated."
+          action={
+            <Link
+              to="/repository"
+              className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+            >
+              Go to repositories
+            </Link>
+          }
         />
-        <Metric
-          label="Open Issues"
-          value={openIssues.length}
-          trend="down"
-          trendValue="-3 this week"
-        />
-        <Metric
-          label="Active Incidents"
-          value={activeIncidents.length}
-          trend={activeIncidents.length > 0 ? 'down' : 'neutral'}
-          trendValue={activeIncidents.length > 0 ? 'Attention needed' : 'All clear'}
-        />
-      </div>
+      ) : effectiveRepo ? (
+        <>
+          <RepoContextHeader repo={effectiveRepo} />
 
-      <div className="space-y-2">
-        <SectionHeader title="Attention Required" subtitle="Items needing immediate attention" />
-        <div className="space-y-2">
-          <EntityRow
-            icon={<ShieldAlert size={16} className="text-danger" />}
-            title="PR #821 flagged as critical risk"
-            subtitle="Payment retry refactor — PCI compliance concerns, insufficient test coverage"
-            severity="critical"
-            badge={<RiskBadge level="critical" />}
-          />
-          <EntityRow
-            icon={<AlertTriangle size={16} className="text-danger" />}
-            title="CI Security Scan failing on auth-gateway"
-            subtitle="3 new CVEs detected in transitive dependencies"
-            severity="critical"
-            badge={<StatusBadge label="Failing" variant="danger" />}
-          />
-          <EntityRow
-            icon={<Zap size={16} className="text-danger" />}
-            title="Payment retry storm issue escalated to SEV1"
-            subtitle="Latency degradation affecting 12% of transactions"
-            severity="critical"
-            badge={<StatusBadge label="SEV1" variant="danger" />}
-          />
-          <EntityRow
-            icon={<Bug size={16} className="text-warning" />}
-            title="Fraud detection false positive rate increased"
-            subtitle="15% increase after model v3.2 deploy — ~2,400 legit transactions flagged daily"
-            severity="warning"
-            badge={<StatusBadge label="High" variant="warning" />}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <SectionHeader title="Recent Engineering Activity" subtitle="Latest events across the platform" />
-        <div className="space-y-1 rounded-lg border border-border-primary bg-bg-secondary p-3">
-          {demoTimeline.map((event) => (
-            <div key={event.id} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
-              <div className="relative mt-0.5 flex shrink-0 items-center justify-center">
-                <div
+          {repos.length > 1 && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Repository">
+              {repos.map((repo) => (
+                <button
+                  key={repo.id}
+                  onClick={() => handleSelectRepo(repo.id)}
                   className={clsx(
-                    'h-2 w-2 rounded-full',
-                    severityColors[event.severity]
+                    'rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                    repo.id === effectiveId
+                      ? 'border-accent/40 bg-accent-muted text-accent'
+                      : 'border-border-primary bg-bg-secondary text-text-secondary hover:border-border-secondary',
                   )}
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  {timelineIcons[event.type]}
-                  <p className="text-sm font-medium text-text-primary truncate">{event.title}</p>
-                </div>
-                <p className="mt-0.5 text-xs text-text-muted line-clamp-1">{event.description}</p>
-              </div>
-              <span className="shrink-0 text-[11px] text-text-muted whitespace-nowrap">
-                {formatTimestamp(event.timestamp)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-2">
-          <SectionHeader title="Risk Overview" subtitle={`Overall risk score: ${risk.totalRiskScore}`} />
-          <div className="rounded-lg border border-border-primary bg-bg-secondary p-4 space-y-4">
-            <div className="flex gap-2">
-              <div className="flex-1 rounded-md bg-risk-critical/10 p-2 text-center">
-                <p className="text-lg font-semibold text-risk-critical">{risk.criticalCount}</p>
-                <p className="text-[10px] uppercase text-text-muted">Critical</p>
-              </div>
-              <div className="flex-1 rounded-md bg-risk-high/10 p-2 text-center">
-                <p className="text-lg font-semibold text-risk-high">{risk.highCount}</p>
-                <p className="text-[10px] uppercase text-text-muted">High</p>
-              </div>
-              <div className="flex-1 rounded-md bg-risk-medium/10 p-2 text-center">
-                <p className="text-lg font-semibold text-risk-medium">{risk.mediumCount}</p>
-                <p className="text-[10px] uppercase text-text-muted">Medium</p>
-              </div>
-              <div className="flex-1 rounded-md bg-risk-low/10 p-2 text-center">
-                <p className="text-lg font-semibold text-risk-low">{risk.lowCount}</p>
-                <p className="text-[10px] uppercase text-text-muted">Low</p>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">Top Risk Areas</p>
-              {risk.topRiskAreas.map((area) => (
-                <div key={area.component} className="flex items-center gap-3">
-                  <div className="h-2 w-2 rounded-full bg-risk-high shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-text-primary truncate">{area.component}</p>
-                  </div>
-                  <span className="text-xs font-mono text-text-secondary">{area.riskScore}</span>
-                </div>
+                >
+                  {repo.fullName}
+                </button>
               ))}
             </div>
-          </div>
-        </div>
+          )}
 
-        <div className="space-y-2">
-          <SectionHeader title="Engineering Health" subtitle="Key performance indicators" />
-          <div className="rounded-lg border border-border-primary bg-bg-secondary p-4 space-y-3">
-            {[
-              { label: 'Code Quality', value: health.codeQuality, trend: health.trends.codeQuality },
-              { label: 'Test Coverage', value: health.testCoverage, trend: health.trends.testCoverage },
-              { label: 'Deployment Frequency', value: health.deploymentFrequency, trend: health.trends.deploymentFrequency },
-              { label: 'MTTR', value: health.meanTimeToRecovery, trend: health.trends.mttr },
-              { label: 'Change Failure Rate', value: health.changeFailureRate, trend: null },
-              { label: 'Technical Debt', value: health.technicalDebt, trend: null },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center gap-3">
-                <span className="w-36 text-xs text-text-secondary shrink-0">{item.label}</span>
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
-                  <div
-                    className={clsx(
-                      'h-full rounded-full transition-all',
-                      item.value >= 80 ? 'bg-success' : item.value >= 60 ? 'bg-warning' : 'bg-danger'
-                    )}
-                    style={{ width: `${item.value}%` }}
-                  />
+          {overview === null ? (
+            overviewError ? (
+              <ErrorState
+                title="Could not load overview"
+                message={overviewError}
+                onRetry={() => effectiveId && void loadOverview(effectiveId)}
+              />
+            ) : (
+              <LoadingState type="dashboard" />
+            )
+          ) : (
+            effectiveId && (
+              <div key={overview.repository.id} className="animate-enter space-y-3">
+                {/* Attention: traceable findings only, never scores */}
+                <Panel
+                  title={`Attention (${overview.attention.length})`}
+                  subtitle="Derived from risk findings, CI outcomes, and stale issues — each item links to its evidence."
+                >
+                  {overview.attention.length === 0 ? (
+                    <p className="border border-dashed border-border-secondary px-2.5 py-3 text-center text-xs text-text-muted">
+                      Nothing currently crosses an attention threshold. Signals appear here when risks, CI, or issues warrant a look.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-border-primary border-y border-border-primary">
+                      {overview.attention.map((item, index) => (
+                        <li key={`${item.kind}-${index}`}>
+                          <Link
+                            to={item.href}
+                            className="flex items-start gap-2 px-2 py-1.5 hover:bg-bg-hover"
+                          >
+                            <span
+                              className={clsx(
+                                'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
+                                ATTENTION_DOT[item.severity] ?? 'bg-text-muted',
+                              )}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[13px] font-medium text-text-primary">
+                                {item.title}
+                              </span>
+                              <span className="block truncate text-xs text-text-muted">
+                                {item.detail}
+                              </span>
+                            </span>
+                            <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                              {item.kind}
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Panel>
+
+                {/* Dimensions: counts with destinations, no health scores */}
+                <div className="grid grid-cols-3 gap-px border border-border-primary bg-border-primary sm:grid-cols-4 lg:grid-cols-8" role="region" aria-label="Repository dimensions">
+                  {[
+                    { label: 'COMMITS', value: overview.counts.commits, to: `/repository/${effectiveId}?tab=timeline` },
+                    { label: 'FILES', value: overview.counts.files, to: `/repository/${effectiveId}?tab=files` },
+                    { label: 'CONTRIBUTORS', value: overview.counts.contributors, to: `/contributors?repositoryId=${effectiveId}` },
+                    { label: 'OPEN PRS', value: overview.counts.prs.open, to: `/pull-requests?repositoryId=${effectiveId}` },
+                    { label: 'OPEN ISSUES', value: overview.counts.issues.open, to: `/issues?repositoryId=${effectiveId}` },
+                    { label: 'WORKFLOWS', value: overview.counts.workflows, to: `/ci-cd?repositoryId=${effectiveId}` },
+                    { label: 'RUNS', value: overview.counts.runs, to: `/ci-cd?repositoryId=${effectiveId}` },
+                    { label: 'BRANCHES', value: overview.counts.branches, to: `/repository/${effectiveId}` },
+                  ].map((cell) => (
+                    <Link key={cell.label} to={cell.to} className="bg-bg-secondary px-2.5 py-2 hover:bg-bg-hover">
+                      <p className="font-mono text-[10px] text-text-muted">{cell.label}</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold text-text-primary">{cell.value}</p>
+                    </Link>
+                  ))}
                 </div>
-                <span className="w-8 text-right text-xs font-mono text-text-secondary">{item.value}</span>
-                {item.trend && (
-                  item.trend === 'improving'
-                    ? <TrendingUp size={12} className="text-success shrink-0" />
-                    : item.trend === 'degrading'
-                    ? <TrendingDown size={12} className="text-danger shrink-0" />
-                    : null
-                )}
+
+                <div className="grid items-start gap-3 xl:grid-cols-2">
+                  {/* What changed */}
+                  <Panel title="What changed" subtitle="Most recently updated PRs and issues.">
+                    {overview.recentPrs.length === 0 && overview.recentIssues.length === 0 ? (
+                      <p className="text-xs text-text-muted">
+                        No synchronized PRs or issues yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {overview.recentPrs.length > 0 && (
+                          <div>
+                            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                              Pull requests
+                            </p>
+                            <ul className="divide-y divide-border-primary border-y border-border-primary">
+                              {overview.recentPrs.map((pr) => (
+                                <li key={pr.number}>
+                                  <Link
+                                    to={`/pull-requests?repositoryId=${effectiveId}`}
+                                    className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-bg-hover"
+                                  >
+                                    <GitPullRequest size={12} className="shrink-0 text-text-muted" />
+                                    <span className="tech-id shrink-0 text-text-muted">#{pr.number}</span>
+                                    <span className="min-w-0 flex-1 truncate text-text-primary">
+                                      {pr.title ?? '(no title)'}
+                                    </span>
+                                    {pr.merged ? (
+                                      <StatusBadge label="merged" variant="info" />
+                                    ) : pr.state === 'open' ? (
+                                      <StatusBadge label="open" variant="success" />
+                                    ) : (
+                                      <StatusBadge label={pr.state} variant="neutral" />
+                                    )}
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {overview.recentIssues.length > 0 && (
+                          <div>
+                            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                              Issues
+                            </p>
+                            <ul className="divide-y divide-border-primary border-y border-border-primary">
+                              {overview.recentIssues.map((issue) => (
+                                <li key={issue.number}>
+                                  <Link
+                                    to={`/issues?repositoryId=${effectiveId}`}
+                                    className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-bg-hover"
+                                  >
+                                    <AlertTriangle size={12} className="shrink-0 text-text-muted" />
+                                    <span className="tech-id shrink-0 text-text-muted">#{issue.number}</span>
+                                    <span className="min-w-0 flex-1 truncate text-text-primary">
+                                      {issue.title ?? '(no title)'}
+                                    </span>
+                                    <StatusBadge label={issue.state} variant={issue.state === 'open' ? 'success' : 'neutral'} />
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Panel>
+
+                  {/* Recent events */}
+                  <Panel title="Recent events" subtitle="Commits, PRs, issues, and CI runs — newest first.">
+                    {overview.recentEvents.length === 0 ? (
+                      <p className="text-xs text-text-muted">
+                        No recent engineering activity in synced history.
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-border-primary border-y border-border-primary">
+                        {overview.recentEvents.slice(0, 12).map((event, index) => (
+                          <li key={`${event.kind}-${event.ref.value}-${index}`}>
+                            <Link
+                              to={eventHref(effectiveId, event)}
+                              className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-bg-hover"
+                            >
+                              <span className="shrink-0">{EVENT_ICON[event.kind]}</span>
+                              <span className="min-w-0 flex-1 truncate text-text-primary">
+                                {event.title}
+                              </span>
+                              <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                                {event.authorLogin ?? ageOf(event.at)}
+                              </span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Panel>
+                </div>
+
+                <div className="grid items-start gap-3 xl:grid-cols-2">
+                  <Panel title="Active contributors" subtitle="Most recently seen committing.">
+                    {overview.topContributors.length === 0 ? (
+                      <p className="text-xs text-text-muted">No contributors in synced history.</p>
+                    ) : (
+                      <ul className="divide-y divide-border-primary border-y border-border-primary">
+                        {overview.topContributors.map((contributor) => (
+                          <li key={contributor.login}>
+                            <Link
+                              to={`/contributors?repositoryId=${effectiveId}`}
+                              className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-bg-hover"
+                            >
+                              <Users size={12} className="shrink-0 text-text-muted" />
+                              <span className="tech-id min-w-0 flex-1 truncate text-text-primary">
+                                {contributor.login}
+                              </span>
+                              <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                                {contributor.commitCount} commits
+                              </span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Panel>
+
+                  <Panel title="Frequently changed files" subtitle="Observed change frequency, not importance.">
+                    {overview.hotFiles.length === 0 ? (
+                      <p className="text-xs text-text-muted">No file change history yet.</p>
+                    ) : (
+                      <ul className="divide-y divide-border-primary border-y border-border-primary">
+                        {overview.hotFiles.map((file) => (
+                          <li key={file.path}>
+                            <Link
+                              to={`/repository/${effectiveId}?tab=files&path=${encodeURIComponent(file.path)}`}
+                              className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-bg-hover"
+                            >
+                              <FileText size={12} className="shrink-0 text-text-muted" />
+                              <span className="tech-id min-w-0 flex-1 truncate text-text-secondary">
+                                {file.path}
+                              </span>
+                              <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                                {file.changes} changes
+                              </span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Panel>
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
+            )
+          )}
+        </>
+      ) : null}
     </div>
-  )
+  );
 }

@@ -21,6 +21,7 @@ import {
   startRepositorySync,
   SyncError,
 } from "../services/repo-sync.service.js";
+import { getRepositoryOverview } from "../services/overview.service.js";
 import { sendGithubError } from "./github-errors.js";
 
 const connectSchema = z.object({
@@ -196,6 +197,175 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             : null,
         },
       });
+    },
+  });
+
+  app.get("/repositories/:id/overview", {
+    preHandler: [requireAuth, requireRepositoryAccess],
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+    schema: {
+      params: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          required: ["repository", "counts", "attention", "recentEvents"],
+          properties: {
+            repository: {
+              type: "object",
+              required: ["id", "fullName"],
+              properties: {
+                id: { type: "string" },
+                fullName: { type: "string" },
+                owner: { type: "string" },
+                name: { type: "string" },
+                defaultBranch: { type: "string" },
+                isPrivate: { type: "boolean" },
+                syncStatus: { type: "string" },
+                lastSyncedAt: { type: ["string", "null"] },
+                lastSuccessfulSyncAt: { type: ["string", "null"] },
+              },
+            },
+            counts: {
+              type: "object",
+              required: ["branches", "commits", "files", "contributors"],
+              properties: {
+                branches: { type: "number" },
+                commits: { type: "number" },
+                files: { type: "number" },
+                contributors: { type: "number" },
+                prs: {
+                  type: "object",
+                  required: ["open", "merged", "closed"],
+                  properties: {
+                    open: { type: "number" },
+                    merged: { type: "number" },
+                    closed: { type: "number" },
+                  },
+                },
+                issues: {
+                  type: "object",
+                  required: ["open", "closed"],
+                  properties: {
+                    open: { type: "number" },
+                    closed: { type: "number" },
+                  },
+                },
+                workflows: { type: "number" },
+                runs: { type: "number" },
+              },
+            },
+            attention: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["kind", "severity", "title", "detail", "href"],
+                properties: {
+                  kind: { type: "string" },
+                  severity: { type: "string" },
+                  title: { type: "string" },
+                  detail: { type: "string" },
+                  href: { type: "string" },
+                },
+              },
+            },
+            recentEvents: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["kind", "title", "ref"],
+                properties: {
+                  kind: { type: "string" },
+                  at: { type: ["string", "null"] },
+                  title: { type: "string" },
+                  subtitle: { type: ["string", "null"] },
+                  authorLogin: { type: ["string", "null"] },
+                  state: { type: ["string", "null"] },
+                  ref: {
+                    type: "object",
+                    required: ["entity", "value"],
+                    properties: {
+                      entity: { type: "string" },
+                      value: { type: "string" },
+                    },
+                  },
+                  workflowName: { type: ["string", "null"] },
+                },
+              },
+            },
+            recentPrs: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["number"],
+                properties: {
+                  number: { type: "number" },
+                  title: { type: ["string", "null"] },
+                  state: { type: "string" },
+                  merged: { type: "boolean" },
+                  authorLogin: { type: ["string", "null"] },
+                  githubUpdatedAt: { type: ["string", "null"] },
+                },
+              },
+            },
+            recentIssues: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["number"],
+                properties: {
+                  number: { type: "number" },
+                  title: { type: ["string", "null"] },
+                  state: { type: "string" },
+                  authorLogin: { type: ["string", "null"] },
+                  githubUpdatedAt: { type: ["string", "null"] },
+                },
+              },
+            },
+            topContributors: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["login", "commitCount"],
+                properties: {
+                  login: { type: "string" },
+                  name: { type: ["string", "null"] },
+                  commitCount: { type: "number" },
+                  lastCommitAt: { type: ["string", "null"] },
+                },
+              },
+            },
+            hotFiles: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["path", "changes"],
+                properties: {
+                  path: { type: "string" },
+                  changes: { type: "number" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!UUID_PATTERN.test(id)) {
+        return reply.badRequest("Invalid repository id");
+      }
+      // Access already verified by requireRepositoryAccess.
+      const overview = await getRepositoryOverview(id);
+      if (!overview) {
+        return reply.notFound("Repository not found");
+      }
+      return reply.send(overview);
     },
   });
 

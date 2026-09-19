@@ -13,14 +13,12 @@ const sizeStyles: Record<NonNullable<AvatarProps['size']>, string> = {
 }
 
 const colorPalette = [
-  'bg-indigo-500/20 text-indigo-400',
-  'bg-emerald-500/20 text-emerald-400',
-  'bg-amber-500/20 text-amber-400',
-  'bg-rose-500/20 text-rose-400',
-  'bg-cyan-500/20 text-cyan-400',
-  'bg-violet-500/20 text-violet-400',
-  'bg-pink-500/20 text-pink-400',
-  'bg-teal-500/20 text-teal-400',
+  'bg-accent-muted text-accent',
+  'bg-success/10 text-success',
+  'bg-warning/10 text-warning',
+  'bg-danger/10 text-danger',
+  'bg-info/10 text-info',
+  'bg-bg-tertiary text-text-secondary',
 ]
 
 function getInitials(name: string): string {

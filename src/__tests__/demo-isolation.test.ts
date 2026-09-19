@@ -13,6 +13,9 @@ import componentsPageSource from '../pages/ComponentsPage?raw';
 import knowledgeGraphPageSource from '../pages/KnowledgeGraphPage?raw';
 import askPageSource from '../pages/AskRepoPilotPage?raw';
 import settingsPageSource from '../pages/SettingsPage?raw';
+import overviewPageSource from '../pages/OverviewPage?raw';
+import timelinePageSource from '../pages/EngineeringMemoryPage?raw';
+import contributorsPageSource from '../pages/ContributorsPage?raw';
 
 /**
  * Static regression guard: production repository flows must never reference
@@ -37,6 +40,10 @@ const productionRepoFlowSources: Array<[string, string]> = [
   ['KnowledgeGraphPage', knowledgeGraphPageSource],
   ['AskRepoPilotPage', askPageSource],
   ['SettingsPage', settingsPageSource],
+  // Phase 10.1: the last demo-driven surfaces are now real-data driven.
+  ['OverviewPage', overviewPageSource],
+  ['EngineeringMemoryPage', timelinePageSource],
+  ['ContributorsPage', contributorsPageSource],
 ];
 
 describe('demo isolation in repository flows', () => {

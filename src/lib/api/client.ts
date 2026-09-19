@@ -107,6 +107,15 @@ class ApiClient {
     return this.request<MemoryOverview>(`/api/repositories/${id}/memory`);
   }
 
+  async getRepositoryOverview(id: string): Promise<RepositoryOverview> {
+    return this.request<RepositoryOverview>(`/api/repositories/${id}/overview`);
+  }
+
+  async getEngineeringEvents(id: string, limit?: number): Promise<TimelineItem[]> {
+    const suffix = limit ? `?limit=${limit}` : '';
+    return this.request<TimelineItem[]>(`/api/repositories/${id}/events${suffix}`);
+  }
+
   async getTimeline(id: string, limit?: number): Promise<ActivityEvent[]> {
     const suffix = limit ? `?limit=${limit}` : '';
     return this.request<ActivityEvent[]>(`/api/repositories/${id}/timeline${suffix}`);
@@ -822,6 +831,73 @@ export interface RepoFileItem {
   type: string | null;
   size: number | null;
   sha: string | null;
+}
+
+export interface TimelineItem {
+  kind: 'commit' | 'pr' | 'issue' | 'ci_run';
+  at: string | null;
+  title: string;
+  subtitle: string | null;
+  authorLogin: string | null;
+  state: string | null;
+  ref: { entity: 'commit' | 'pr' | 'issue' | 'run'; value: string };
+  workflowName: string | null;
+}
+
+export interface AttentionItem {
+  kind: 'risk' | 'ci' | 'pr' | 'issue';
+  severity: string;
+  title: string;
+  detail: string;
+  href: string;
+}
+
+export interface RepositoryOverview {
+  repository: {
+    id: string;
+    fullName: string;
+    owner: string;
+    name: string;
+    defaultBranch: string;
+    isPrivate: boolean;
+    syncStatus: string;
+    lastSyncedAt: string | null;
+    lastSuccessfulSyncAt: string | null;
+  };
+  counts: {
+    branches: number;
+    commits: number;
+    files: number;
+    contributors: number;
+    prs: { open: number; merged: number; closed: number };
+    issues: { open: number; closed: number };
+    workflows: number;
+    runs: number;
+  };
+  attention: AttentionItem[];
+  recentEvents: TimelineItem[];
+  recentPrs: Array<{
+    number: number;
+    title: string | null;
+    state: string;
+    merged: boolean;
+    authorLogin: string | null;
+    githubUpdatedAt: string | null;
+  }>;
+  recentIssues: Array<{
+    number: number;
+    title: string | null;
+    state: string;
+    authorLogin: string | null;
+    githubUpdatedAt: string | null;
+  }>;
+  topContributors: Array<{
+    login: string;
+    name: string | null;
+    commitCount: number;
+    lastCommitAt: string | null;
+  }>;
+  hotFiles: Array<{ path: string; changes: number }>;
 }
 
 export interface MemorySearchResult {

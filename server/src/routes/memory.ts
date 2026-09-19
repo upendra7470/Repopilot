@@ -7,6 +7,7 @@ import {
 import {
   getContributorActivity,
   getContributorSummaries,
+  getEngineeringTimeline,
   getFileHistory,
   getFrequentlyChangedFiles,
   getMemoryOverview,
@@ -14,7 +15,6 @@ import {
   listRepositoryFiles,
   searchMemory,
 } from "../services/memory.service.js";
-
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -465,6 +465,48 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params as { id: string };
       const { limit } = request.query as { limit?: number };
       return reply.send(await getFrequentlyChangedFiles(id, limit ?? 20));
+    },
+  });
+
+  app.get("/repositories/:id/events", {
+    ...guarded,
+    schema: {
+      params: idParams,
+      querystring: {
+        type: "object",
+        properties: { limit: { type: "number" } },
+      },
+      response: {
+        200: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["kind", "title", "ref"],
+            properties: {
+              kind: { type: "string" },
+              at: { type: ["string", "null"] },
+              title: { type: "string" },
+              subtitle: { type: ["string", "null"] },
+              authorLogin: { type: ["string", "null"] },
+              state: { type: ["string", "null"] },
+              ref: {
+                type: "object",
+                required: ["entity", "value"],
+                properties: {
+                  entity: { type: "string" },
+                  value: { type: "string" },
+                },
+              },
+              workflowName: { type: ["string", "null"] },
+            },
+          },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { limit } = request.query as { limit?: number };
+      return reply.send(await getEngineeringTimeline(id, limit ?? 30));
     },
   });
 }

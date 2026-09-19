@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   Activity,
@@ -378,6 +378,8 @@ export function CICDPage() {
   const [branchFilter, setBranchFilter] = useState('');
   const [conclusionFilter, setConclusionFilter] = useState('all');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // Late detail responses for a deselected entity must not overwrite state.
+  const selectedRunRef = useRef<string | null>(null);
   const [detail, setDetail] = useState<CiRunDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -454,6 +456,7 @@ export function CICDPage() {
 
   const clearSelection = useCallback(() => {
     setSelectedRunId(null);
+    selectedRunRef.current = null;
     setDetail(null);
     setDetailError(null);
   }, []);
@@ -478,17 +481,24 @@ export function CICDPage() {
     async (runGithubId: string) => {
       if (!effectiveId) return;
       setSelectedRunId(runGithubId);
+      selectedRunRef.current = runGithubId;
       setDetailError(null);
       setDetailLoading(true);
       try {
-        setDetail(await api.getCiRun(effectiveId, runGithubId));
+        const loaded = await api.getCiRun(effectiveId, runGithubId);
+        // Late responses for a deselected run must not overwrite the current one.
+        if (selectedRunRef.current !== runGithubId) return;
+        setDetail(loaded);
       } catch (err) {
+        if (selectedRunRef.current !== runGithubId) return;
         setDetail(null);
         setDetailError(
           err instanceof ApiError ? err.message : 'Failed to load run.',
         );
       } finally {
-        setDetailLoading(false);
+        if (selectedRunRef.current === runGithubId) {
+          setDetailLoading(false);
+        }
       }
     },
     [effectiveId],

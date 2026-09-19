@@ -15,15 +15,13 @@ const commands: CommandItem[] = [
   { id: "risks", label: "Risks", section: "Navigation" },
   { id: "pull-requests", label: "PR Intelligence", section: "Navigation" },
   { id: "issues", label: "Issues", section: "Navigation" },
-  { id: "cicd", label: "CI/CD", section: "Navigation" },
+  { id: "ci-cd", label: "CI/CD", section: "Navigation" },
   { id: "incidents", label: "Incidents", section: "Navigation" },
   { id: "timeline", label: "Timeline", section: "Memory" },
   { id: "contributors", label: "Contributors", section: "Memory" },
   { id: "components", label: "Components", section: "Memory" },
   { id: "knowledge-graph", label: "Knowledge Graph", section: "Memory" },
-  { id: "files", label: "Files", section: "Memory" },
-  { id: "commits", label: "Commits", section: "Memory" },
-  { id: "branches", label: "Branches", section: "Memory" },
+  { id: "repository", label: "Repositories", section: "Memory" },
   { id: "ask", label: "Ask RepoPilot", section: "AI" },
   { id: "settings", label: "Settings", section: "Settings" },
 ];
@@ -93,9 +91,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
       onClick={onClose}
     >
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className="fixed inset-0 bg-black/50" />
       <div
-        className="relative w-full max-w-lg bg-bg-secondary border border-border-primary rounded-xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-lg overflow-hidden border border-border-primary bg-bg-secondary"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border-primary">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   GitPullRequest,
@@ -361,6 +361,8 @@ export function PullRequestPage() {
   const [prs, setPrs] = useState<PrSummary[] | null>(null);
   const [prsError, setPrsError] = useState<string | null>(null);
   const [selectedNumber, setSelectedNumber] = useState<number | null>(null);
+  // Late detail responses for a deselected entity must not overwrite state.
+  const selectedNumberRef = useRef<number | null>(null);
   const [detail, setDetail] = useState<PrDetail | null>(null);
   const [intelligence, setIntelligence] = useState<PrIntelligence | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -444,6 +446,7 @@ export function PullRequestPage() {
 
   const clearSelection = useCallback(() => {
     setSelectedNumber(null);
+    selectedNumberRef.current = null;
     setDetail(null);
     setIntelligence(null);
     setDetailError(null);
@@ -477,6 +480,7 @@ export function PullRequestPage() {
     async (prNumber: number) => {
       if (!effectiveId) return;
       setSelectedNumber(prNumber);
+      selectedNumberRef.current = prNumber;
       setDetailError(null);
       setDetailLoading(true);
       try {
@@ -484,16 +488,21 @@ export function PullRequestPage() {
           api.getPullRequest(effectiveId, prNumber),
           api.getPrIntelligence(effectiveId, prNumber),
         ]);
+        // Late responses for a deselected PR must not overwrite the current one.
+        if (selectedNumberRef.current !== prNumber) return;
         setDetail(loadedDetail);
         setIntelligence(loadedIntel);
       } catch (err) {
+        if (selectedNumberRef.current !== prNumber) return;
         setDetail(null);
         setIntelligence(null);
         setDetailError(
           err instanceof ApiError ? err.message : 'Failed to load pull request.',
         );
       } finally {
-        setDetailLoading(false);
+        if (selectedNumberRef.current === prNumber) {
+          setDetailLoading(false);
+        }
       }
     },
     [effectiveId],
