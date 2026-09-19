@@ -107,6 +107,18 @@ vi.mock("../../services/github-provider.js", async (importOriginal) => {
       fail();
       return [];
     }),
+    listGithubWorkflows: vi.fn(async () => {
+      fail();
+      return [];
+    }),
+    listGithubWorkflowRuns: vi.fn(async () => {
+      fail();
+      return [];
+    }),
+    listGithubRunJobs: vi.fn(async () => {
+      fail();
+      return [];
+    }),
   };
 });
 

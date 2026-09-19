@@ -103,6 +103,18 @@ vi.mock("../github-provider.js", async (importOriginal) => {
       if (mockState.authError) throw mockState.authError;
       return [];
     }),
+    listGithubWorkflows: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      return [];
+    }),
+    listGithubWorkflowRuns: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      return [];
+    }),
+    listGithubRunJobs: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      return [];
+    }),
   };
 });
 

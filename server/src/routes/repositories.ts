@@ -223,6 +223,8 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             contributorCount: { type: "number" },
             prCount: { type: "number" },
             issueCount: { type: "number" },
+            workflowCount: { type: "number" },
+            workflowRunCount: { type: "number" },
             truncatedTree: { type: "boolean" },
             durationMs: { type: "number" },
           },

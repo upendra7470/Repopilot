@@ -860,6 +860,211 @@ export async function listGithubIssueComments(
   }));
 }
 
+/** Workflow definition from the Actions API (Phase 10, read-only). */
+export interface GithubWorkflow {
+  id: number;
+  name: string | null;
+  path: string | null;
+  state: string | null;
+  badgeUrl: string | null;
+  htmlUrl: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+interface GithubWorkflowResponse {
+  id: number;
+  name?: string | null;
+  path?: string | null;
+  state?: string | null;
+  badge_url?: string | null;
+  html_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+function toGithubWorkflow(data: GithubWorkflowResponse): GithubWorkflow {
+  return {
+    id: data.id,
+    name: data.name ?? null,
+    path: data.path ?? null,
+    state: data.state ?? null,
+    badgeUrl: data.badge_url ?? null,
+    htmlUrl: data.html_url ?? null,
+    createdAt: data.created_at ?? null,
+    updatedAt: data.updated_at ?? null,
+  };
+}
+
+/**
+ * List repository workflows. The endpoint wraps items in a `workflows`
+ * envelope (unlike the array-returning list endpoints), handled here.
+ */
+export async function listGithubWorkflows(
+  accessToken: string,
+  owner: string,
+  name: string,
+  maxPages = 1,
+): Promise<GithubWorkflow[]> {
+  const collected: GithubWorkflow[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const data = await githubGet<{ workflows?: GithubWorkflowResponse[] }>(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/workflows?per_page=100&page=${page}`,
+      accessToken,
+    );
+    const batch = data.workflows ?? [];
+    collected.push(...batch.map(toGithubWorkflow));
+    if (batch.length < 100) {
+      break;
+    }
+  }
+  return collected;
+}
+
+/** Workflow run identity + outcome (Phase 10, read-only). */
+export interface GithubWorkflowRun {
+  id: number;
+  workflowId: number | null;
+  runNumber: number | null;
+  name: string | null;
+  event: string | null;
+  status: string | null;
+  conclusion: string | null;
+  headBranch: string | null;
+  headSha: string | null;
+  runAttempt: number | null;
+  actorLogin: string | null;
+  prNumbers: number[];
+  htmlUrl: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  startedAt: string | null;
+}
+
+interface GithubRunResponse {
+  id: number;
+  workflow_id?: number | null;
+  run_number?: number | null;
+  name?: string | null;
+  event?: string | null;
+  status?: string | null;
+  conclusion?: string | null;
+  head_branch?: string | null;
+  head_sha?: string | null;
+  run_attempt?: number | null;
+  actor?: { login?: string } | null;
+  pull_requests?: Array<{ number?: number }> | null;
+  html_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  run_started_at?: string | null;
+}
+
+function toGithubWorkflowRun(data: GithubRunResponse): GithubWorkflowRun {
+  return {
+    id: data.id,
+    workflowId: typeof data.workflow_id === "number" ? data.workflow_id : null,
+    runNumber: typeof data.run_number === "number" ? data.run_number : null,
+    name: data.name ?? null,
+    event: data.event ?? null,
+    status: data.status ?? null,
+    conclusion: data.conclusion ?? null,
+    headBranch: data.head_branch ?? null,
+    headSha: data.head_sha ?? null,
+    runAttempt: typeof data.run_attempt === "number" ? data.run_attempt : null,
+    actorLogin: data.actor?.login ?? null,
+    prNumbers: (data.pull_requests ?? [])
+      .map((pr) => pr.number)
+      .filter((n): n is number => typeof n === "number"),
+    htmlUrl: data.html_url ?? null,
+    createdAt: data.created_at ?? null,
+    updatedAt: data.updated_at ?? null,
+    startedAt: data.run_started_at ?? null,
+  };
+}
+
+/**
+ * List recent workflow runs for a repository (all workflows), newest
+ * first, bounded pages. Callers slice to their retention cap.
+ */
+export async function listGithubWorkflowRuns(
+  accessToken: string,
+  owner: string,
+  name: string,
+  maxPages = 2,
+): Promise<GithubWorkflowRun[]> {
+  const collected: GithubWorkflowRun[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const data = await githubGet<{ workflow_runs?: GithubRunResponse[] }>(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/runs?per_page=100&page=${page}`,
+      accessToken,
+    );
+    const batch = data.workflow_runs ?? [];
+    collected.push(...batch.map(toGithubWorkflowRun));
+    if (batch.length < 100) {
+      break;
+    }
+  }
+  return collected;
+}
+
+/** Workflow job metadata (Phase 10 — no logs, no steps, no annotations). */
+export interface GithubJob {
+  id: number;
+  name: string | null;
+  status: string | null;
+  conclusion: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  htmlUrl: string | null;
+}
+
+interface GithubJobResponse {
+  id: number;
+  name?: string | null;
+  status?: string | null;
+  conclusion?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  html_url?: string | null;
+}
+
+/**
+ * List jobs for one run, bounded pages. Steps, logs, and annotations are
+ * deliberately NOT requested — Phase 10 needs job outcomes, not log text.
+ */
+export async function listGithubRunJobs(
+  accessToken: string,
+  owner: string,
+  name: string,
+  runId: number,
+  maxPages = 1,
+): Promise<GithubJob[]> {
+  const collected: GithubJob[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const data = await githubGet<{ jobs?: GithubJobResponse[] }>(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/runs/${runId}/jobs?per_page=100&page=${page}`,
+      accessToken,
+    );
+    const batch = data.jobs ?? [];
+    collected.push(
+      ...batch.map((job) => ({
+        id: job.id,
+        name: job.name ?? null,
+        status: job.status ?? null,
+        conclusion: job.conclusion ?? null,
+        startedAt: job.started_at ?? null,
+        completedAt: job.completed_at ?? null,
+        htmlUrl: job.html_url ?? null,
+      })),
+    );
+    if (batch.length < 100) {
+      break;
+    }
+  }
+  return collected;
+}
+
 /**
  * Fetch the authenticated GitHub user's profile. The access token is only
  * ever sent in the Authorization header — never logged, never in URLs.

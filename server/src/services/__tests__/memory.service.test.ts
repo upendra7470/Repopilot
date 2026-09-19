@@ -63,6 +63,9 @@ vi.mock("../github-provider.js", async (importOriginal) => {
     listGithubPullFiles: vi.fn(async () => []),
     listGithubIssues: vi.fn(async () => []),
     listGithubIssueComments: vi.fn(async () => []),
+    listGithubWorkflows: vi.fn(async () => []),
+    listGithubWorkflowRuns: vi.fn(async () => []),
+    listGithubRunJobs: vi.fn(async () => []),
   };
 });
 

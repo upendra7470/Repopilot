@@ -52,7 +52,7 @@ const sections: NavSection[] = [
       { id: 'risks', label: 'Risks', icon: ShieldAlert, status: 'active' },
       { id: 'pull-requests', label: 'PR Intelligence', icon: GitPullRequest, status: 'active' },
       { id: 'issues', label: 'Issues', icon: AlertCircle, status: 'active' },
-      { id: 'ci-cd', label: 'CI/CD', icon: Activity, status: 'soon' },
+      { id: 'ci-cd', label: 'CI/CD', icon: Activity, status: 'active' },
       { id: 'incidents', label: 'Incidents', icon: AlertTriangle, status: 'soon' },
     ],
   },

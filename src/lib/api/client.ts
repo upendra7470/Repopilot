@@ -215,7 +215,51 @@ class ApiClient {
       { method: 'POST' },
     );
   }
-  async getHealth() {
+
+  async getCiSummary(id: string): Promise<CiSummary> {
+    return this.request<CiSummary>(`/api/repositories/${id}/ci`);
+  }
+
+  async listCiRuns(
+    id: string,
+    params?: {
+      workflow?: string;
+      branch?: string;
+      status?: string;
+      conclusion?: string;
+      pr?: number;
+      page?: number;
+      perPage?: number;
+    },
+  ): Promise<CiRunListPage> {
+    const search = new URLSearchParams();
+    if (params?.workflow) search.set('workflow', params.workflow);
+    if (params?.branch) search.set('branch', params.branch);
+    if (params?.status) search.set('status', params.status);
+    if (params?.conclusion) search.set('conclusion', params.conclusion);
+    if (params?.pr !== undefined) search.set('pr', String(params.pr));
+    if (params?.page) search.set('page', String(params.page));
+    if (params?.perPage) search.set('per_page', String(params.perPage));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return this.request<CiRunListPage>(`/api/repositories/${id}/ci/runs${suffix}`);
+  }
+
+  async getCiRun(id: string, runId: string): Promise<CiRunDetail> {
+    return this.request<CiRunDetail>(`/api/repositories/${id}/ci/runs/${runId}`);
+  }
+
+  async getCiAnalysis(id: string, runId: string): Promise<CiAnalysisState> {
+    return this.request<CiAnalysisState>(
+      `/api/repositories/${id}/ci/runs/${runId}/analysis`,
+    );
+  }
+
+  async analyzeCiRun(id: string, runId: string): Promise<CiAnalysisState> {
+    return this.request<CiAnalysisState>(
+      `/api/repositories/${id}/ci/runs/${runId}/analyze`,
+      { method: 'POST' },
+    );
+  }  async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
 
@@ -339,6 +383,8 @@ export interface SyncResult {
   contributorCount: number;
   prCount: number;
   issueCount: number;
+  workflowCount: number;
+  workflowRunCount: number;
   truncatedTree: boolean;
   durationMs: number;
 }
@@ -578,6 +624,128 @@ export interface IssueAnalysisState {
   model: string | null;
   cached: boolean;
   analysis: IssueAiAnalysis | null;
+  error: { code: string; message: string } | null;
+}
+
+export interface CiSignal {
+  type: string;
+  severity: 'info' | 'low' | 'medium' | 'high';
+  title: string;
+  detail: string;
+  evidence: Array<{ label: string; value: string }>;
+}
+
+export interface CiWorkflowSummary {
+  workflow: {
+    id: string;
+    githubId: string;
+    name: string | null;
+    path: string | null;
+    state: string | null;
+    badgeUrl: string | null;
+    htmlUrl: string | null;
+    githubCreatedAt: string | null;
+    githubUpdatedAt: string | null;
+  };
+  active: boolean;
+  lastRun: CiRun | null;
+  recentFailures: number;
+  failureStreak: number;
+  unstable: boolean;
+}
+
+export interface CiRun {
+  id: string;
+  githubId: string;
+  runNumber: number | null;
+  name: string | null;
+  event: string | null;
+  status: string | null;
+  conclusion: string | null;
+  headBranch: string | null;
+  headSha: string | null;
+  runAttempt: number | null;
+  actorLogin: string | null;
+  prNumbers: number[];
+  htmlUrl: string | null;
+  durationSec: number | null;
+  githubCreatedAt: string | null;
+  githubUpdatedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface CiRunListItem extends CiRun {
+  workflowName: string | null;
+  linkedPrs: number[];
+}
+
+export interface CiRunListPage {
+  data: CiRunListItem[];
+  pagination: { page: number; perPage: number; total: number };
+}
+
+export interface CiSummary {
+  counts: {
+    workflows: number;
+    activeWorkflows: number;
+    runs: number;
+    running: number;
+    completed: number;
+    success: number;
+    failed: number;
+    other: number;
+    successRate: number | null;
+  };
+  signals: CiSignal[];
+  failureStreaks: Array<{ workflowGithubId: string; workflowName: string | null; streak: number; lastRunGithubId: string }>;
+  unstableWorkflows: Array<{ workflowGithubId: string; workflowName: string | null; failures: number; window: number }>;
+  recentFailures: CiRunListItem[];
+  staleRuns: CiRunListItem[];
+  recovered: Array<{ workflowGithubId: string; workflowName: string | null; afterStreak: number }>;
+  prCiStates: Array<{ prNumber: number; prTitle: string | null; state: string; runGithubId: string | null; workflowName: string | null; conclusion: string | null }>;
+  lastFailureAt: string | null;
+  workflows: CiWorkflowSummary[];
+  recentRuns: CiRunListItem[];
+}
+
+export interface CiRunDetail {
+  run: CiRun;
+  workflow: CiWorkflowSummary['workflow'] | null;
+  jobs: Array<{
+    githubId: string;
+    name: string | null;
+    status: string | null;
+    conclusion: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    durationSec: number | null;
+    htmlUrl: string | null;
+  }>;
+  commit: { sha: string; message: string | null; authorLogin: string | null } | null;
+  linkedPrs: Array<{ number: number; title: string | null; state: string; merged: boolean; via: string }>;
+  files: Array<{ path: string; windowChanges: number; hot: boolean }>;
+  riskFindings: Array<{ id: string; type: string; severity: string; title: string }>;
+  relatedIssues: Array<{ number: number; title: string | null; state: string }>;
+  signals: CiSignal[];
+}
+
+export interface CiAiAnalysis {
+  summary: string;
+  assessment: 'low' | 'medium' | 'high' | 'unknown';
+  keySignals: Array<{ claim: string; evidenceIds: string[] }>;
+  engineeringContext: Array<{ claim: string; evidenceIds: string[] }>;
+  evidence: Array<{ id: string; kind: string; label: string; detail: string }>;
+  possibleInvestigationPaths: Array<{ text: string; evidenceIds: string[] }>;
+  unknowns: string[];
+}
+
+export interface CiAnalysisState {
+  status: 'completed' | 'failed' | 'unavailable' | 'pending';
+  fingerprint: string;
+  model: string | null;
+  cached: boolean;
+  analysis: CiAiAnalysis | null;
   error: { code: string; message: string } | null;
 }
 

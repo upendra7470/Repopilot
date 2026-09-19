@@ -50,6 +50,13 @@
       "when": 1789790309745,
       "tag": "0006_issue-ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789793017348,
+      "tag": "0007_ci-ingestion",
+      "breakpoints": true
     }
   ]
 }

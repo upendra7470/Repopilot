@@ -23,6 +23,7 @@ import { getLogger } from "../utils/logger.js";
 import { chunk } from "./sync-utils.js";
 import { syncPullRequests } from "./pr-sync.service.js";
 import { syncIssues } from "./issue-sync.service.js";
+import { syncCi } from "./ci-sync.service.js";
 
 /** Domain error with an explicit HTTP mapping for the route layer. */
 export type SyncHttpStatus = 400 | 403 | 404 | 409 | 502 | 503;
@@ -48,6 +49,8 @@ export interface SyncSummary {
   contributorCount: number;
   prCount: number;
   issueCount: number;
+  workflowCount: number;
+  workflowRunCount: number;
   truncatedTree: boolean;
   durationMs: number;
 }
@@ -530,6 +533,16 @@ export async function startRepositorySync(
       repo.name,
     );
 
+    // 9. CI (bounded, read-only; last stage — correlates against synced
+    // commits and PRs, never the reverse).
+    await setRunStage(runId, "ci");
+    const { workflowCount, runCount: workflowRunCount } = await syncCi(
+      repositoryId,
+      credential,
+      repo.owner,
+      repo.name,
+    );
+
     const finishedAt = new Date();
     await db
       .update(syncRuns)
@@ -542,6 +555,8 @@ export async function startRepositorySync(
         contributorCount: contributorIds.size,
         prCount,
         issueCount,
+        workflowCount,
+        workflowRunCount,
         finishedAt,
       })
       .where(eq(syncRuns.id, runId));
@@ -563,6 +578,8 @@ export async function startRepositorySync(
         files: fileCount,
         prs: prCount,
         issues: issueCount,
+        workflows: workflowCount,
+        runs: workflowRunCount,
       },
       "Repository sync succeeded",
     );
@@ -576,6 +593,8 @@ export async function startRepositorySync(
       contributorCount: contributorIds.size,
       prCount,
       issueCount,
+      workflowCount,
+      workflowRunCount,
       truncatedTree,
       durationMs: Date.now() - started,
     };

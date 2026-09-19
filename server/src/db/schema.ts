@@ -341,6 +341,8 @@ export const syncRuns = pgTable(
     contributorCount: integer("contributor_count").default(0).notNull(),
     prCount: integer("pr_count").default(0).notNull(),
     issueCount: integer("issue_count").default(0).notNull(),
+    workflowCount: integer("workflow_count").default(0).notNull(),
+    workflowRunCount: integer("workflow_run_count").default(0).notNull(),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     finishedAt: timestamp("finished_at"),
   },
@@ -692,3 +694,160 @@ export type IssueCommitLink = typeof issueCommitLinks.$inferSelect;
 export type NewIssueCommitLink = typeof issueCommitLinks.$inferInsert;
 export type IssueAnalysis = typeof issueAnalyses.$inferSelect;
 export type NewIssueAnalysis = typeof issueAnalyses.$inferInsert;
+
+/**
+ * GitHub Actions workflows (Phase 10 ingestion). Identity is the stable
+ * GitHub workflow ID — never the name, which can change. Disabled or
+ * deleted workflows are retained with their state so history stays
+ * interpretable.
+ */
+export const ciWorkflows = pgTable(
+  "ci_workflows",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }).notNull(),
+    name: varchar("name", { length: 255 }),
+    path: text("path"),
+    state: varchar("state", { length: 30 }),
+    badgeUrl: text("badge_url"),
+    htmlUrl: text("html_url"),
+    githubCreatedAt: timestamp("github_created_at"),
+    githubUpdatedAt: timestamp("github_updated_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("ci_workflows_repo_github_idx").on(table.repositoryId, table.githubId),
+    index("ci_workflows_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * GitHub Actions workflow runs (Phase 10 ingestion).
+ *
+ * `status` (queued/in_progress/completed/…) and `conclusion`
+ * (success/failure/…/null while running) are stored SEPARATELY — collapsing
+ * them loses the running-vs-failed distinction. Runs are mutable: GitHub
+ * updates status/conclusion as execution proceeds, so re-sync upserts
+ * refresh them in place. `prNumbers` carries GitHub's own pull-request
+ * association (bounded, sorted); head-SHA → commit → PR resolution is the
+ * second evidence path, computed at read time.
+ */
+export const ciRuns = pgTable(
+  "ci_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    workflowId: uuid("workflow_id")
+      .references(() => ciWorkflows.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }).notNull(),
+    runNumber: integer("run_number"),
+    name: varchar("name", { length: 255 }),
+    event: varchar("event", { length: 50 }),
+    status: varchar("status", { length: 30 }),
+    conclusion: varchar("conclusion", { length: 30 }),
+    headBranch: varchar("head_branch", { length: 255 }),
+    headSha: varchar("head_sha", { length: 40 }),
+    runAttempt: integer("run_attempt"),
+    actorLogin: varchar("actor_login", { length: 255 }),
+    prNumbers: json("pr_numbers").$type<number[]>(),
+    htmlUrl: text("html_url"),
+    durationSec: integer("duration_sec"),
+    githubCreatedAt: timestamp("github_created_at"),
+    githubUpdatedAt: timestamp("github_updated_at"),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("ci_runs_repo_github_idx").on(table.repositoryId, table.githubId),
+    index("ci_runs_repo_idx").on(table.repositoryId),
+    index("ci_runs_repo_workflow_idx").on(table.repositoryId, table.workflowId),
+    index("ci_runs_repo_sha_idx").on(table.repositoryId, table.headSha),
+    index("ci_runs_repo_branch_idx").on(table.repositoryId, table.headBranch),
+    index("ci_runs_repo_status_idx").on(table.repositoryId, table.status),
+    index("ci_runs_repo_conclusion_idx").on(table.repositoryId, table.conclusion),
+  ],
+);
+
+/**
+ * Workflow job metadata (Phase 10). Answers "which part of CI failed"
+ * without log ingestion: name/status/conclusion/duration only. Logs are
+ * deliberately NEVER fetched or stored.
+ */
+export const ciJobs = pgTable(
+  "ci_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    runId: uuid("run_id")
+      .references(() => ciRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }).notNull(),
+    name: varchar("name", { length: 255 }),
+    status: varchar("status", { length: 30 }),
+    conclusion: varchar("conclusion", { length: 30 }),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    durationSec: integer("duration_sec"),
+    htmlUrl: text("html_url"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("ci_jobs_run_github_idx").on(table.runId, table.githubId),
+    index("ci_jobs_run_idx").on(table.runId),
+    index("ci_jobs_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Cached AI run analyses (Phase 10). Same fingerprint strategy as PRs and
+ * issues: one completed analysis per evidence fingerprint.
+ */
+export const ciAnalyses = pgTable(
+  "ci_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    runId: uuid("run_id")
+      .references(() => ciRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    evidenceFingerprint: varchar("evidence_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    model: varchar("model", { length: 255 }),
+    summary: text("summary"),
+    assessment: varchar("assessment", { length: 20 }),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("ci_analyses_run_fingerprint_idx").on(
+      table.runId,
+      table.evidenceFingerprint,
+    ),
+    index("ci_analyses_repo_idx").on(table.repositoryId),
+  ],
+);
+
+export type CiWorkflow = typeof ciWorkflows.$inferSelect;
+export type NewCiWorkflow = typeof ciWorkflows.$inferInsert;
+export type CiRun = typeof ciRuns.$inferSelect;
+export type NewCiRun = typeof ciRuns.$inferInsert;
+export type CiJob = typeof ciJobs.$inferSelect;
+export type NewCiJob = typeof ciJobs.$inferInsert;
+export type CiAnalysis = typeof ciAnalyses.$inferSelect;
+export type NewCiAnalysis = typeof ciAnalyses.$inferInsert;

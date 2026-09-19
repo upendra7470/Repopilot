@@ -37,14 +37,12 @@ function renderWithRouter(ui: React.ReactNode, path = '/') {
   return render(<MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>);
 }
 
-describe('Phase 8 unfinished sections are honest', () => {
-  afterEach(() => {
+describe('Phase 8 unfinished sections are honest', () => {  afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it.each([
-    ['CI/CD', CICDPage],
     ['Incidents', IncidentsPage],
     ['Components', ComponentsPage],
     ['Knowledge Graph', KnowledgeGraphPage],
@@ -56,13 +54,6 @@ describe('Phase 8 unfinished sections are honest', () => {
     // No fabricated operational claims.
     expect(document.body.textContent).not.toMatch(/all tests are passing/i);
     expect(document.body.textContent).not.toMatch(/security vulnerability found/i);
-  });
-
-  it('CI page explicitly disclaims pipeline knowledge', () => {
-    renderWithRouter(<CICDPage />);
-    expect(
-      screen.getByText(/will not pretend otherwise/i),
-    ).toBeInTheDocument();
   });
 });
 
@@ -157,5 +148,37 @@ describe('Phase 8 sidebar communicates availability', () => {
     // Unfinished sections are labeled, not faked.
     expect(screen.getAllByText('Soon').length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toMatch(/nexuspay/i);
+  });
+});
+
+describe('Phase 10 CI page uses real backend data', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('shows a connect affordance with no repos and no demo content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        if (String(url).endsWith('/api/repositories')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve([]),
+          });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={['/ci-cd']}>
+        <CICDPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('No connected repositories')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/nexuspay/i);
+    expect(document.body.textContent).not.toMatch(/not yet available/i);
   });
 });
