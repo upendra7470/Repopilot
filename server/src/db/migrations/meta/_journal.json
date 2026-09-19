@@ -43,6 +43,13 @@
       "when": 1789750303025,
       "tag": "0005_pr-ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789790309745,
+      "tag": "0006_issue-ingestion",
+      "breakpoints": true
     }
   ]
 }

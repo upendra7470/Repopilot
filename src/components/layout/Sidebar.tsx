@@ -51,7 +51,7 @@ const sections: NavSection[] = [
     items: [
       { id: 'risks', label: 'Risks', icon: ShieldAlert, status: 'active' },
       { id: 'pull-requests', label: 'PR Intelligence', icon: GitPullRequest, status: 'active' },
-      { id: 'issues', label: 'Issues', icon: AlertCircle, status: 'soon' },
+      { id: 'issues', label: 'Issues', icon: AlertCircle, status: 'active' },
       { id: 'ci-cd', label: 'CI/CD', icon: Activity, status: 'soon' },
       { id: 'incidents', label: 'Incidents', icon: AlertTriangle, status: 'soon' },
     ],

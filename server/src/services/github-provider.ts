@@ -710,11 +710,160 @@ export async function listGithubPullFiles(
     }));
 }
 
+/** Issue identity + metadata (Phase 9 ingestion, read-only). */
+export interface GithubIssue {
+  id: number;
+  number: number;
+  title: string | null;
+  body: string | null;
+  state: string;
+  stateReason: string | null;
+  authorLogin: string | null;
+  authorGithubId: number | null;
+  authorAssociation: string | null;
+  htmlUrl: string | null;
+  locked: boolean;
+  commentsCount: number;
+  labels: string[];
+  milestoneNumber: number | null;
+  milestoneTitle: string | null;
+  milestoneState: string | null;
+  assignees: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+}
+
+interface GithubIssueResponse {
+  id: number;
+  number: number;
+  title: string | null;
+  body: string | null;
+  state: string;
+  state_reason?: string | null;
+  user: { login?: string; id?: number } | null;
+  author_association?: string | null;
+  html_url?: string;
+  locked?: boolean;
+  comments?: number;
+  labels?: Array<string | { name?: string }>;
+  milestone?: { number?: number; title?: string | null; state?: string | null } | null;
+  assignees?: Array<{ login?: string }> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  closed_at?: string | null;
+  /** Present when the "issue" is actually a pull request — must be filtered. */
+  pull_request?: { url?: string } | null;
+}
+
+function toGithubIssue(data: GithubIssueResponse): GithubIssue {
+  const labels: string[] = [];
+  for (const label of data.labels ?? []) {
+    const name =
+      typeof label === "string" ? label : (label?.name ?? null);
+    if (typeof name === "string" && name.length > 0) {
+      labels.push(name);
+    }
+  }
+  return {
+    id: data.id,
+    number: data.number,
+    title: data.title ?? null,
+    body: data.body ?? null,
+    state: data.state,
+    stateReason: data.state_reason ?? null,
+    authorLogin: data.user?.login ?? null,
+    authorGithubId: typeof data.user?.id === "number" ? data.user.id : null,
+    authorAssociation: data.author_association ?? null,
+    htmlUrl: data.html_url ?? null,
+    locked: data.locked ?? false,
+    commentsCount: typeof data.comments === "number" ? data.comments : 0,
+    labels,
+    milestoneNumber:
+      typeof data.milestone?.number === "number" ? data.milestone.number : null,
+    milestoneTitle: data.milestone?.title ?? null,
+    milestoneState: data.milestone?.state ?? null,
+    assignees: (data.assignees ?? [])
+      .map((a) => a.login)
+      .filter((login): login is string => typeof login === "string"),
+    createdAt: data.created_at ?? null,
+    updatedAt: data.updated_at ?? null,
+    closedAt: data.closed_at ?? null,
+  };
+}
+
+/**
+ * List repository issues, newest-updated first, bounded pages.
+ *
+ * The issues API includes pull requests — entries carrying the
+ * `pull_request` key are actual PRs and are EXCLUDED here so they are
+ * never persisted as issues. Callers needing PRs use the pulls endpoints.
+ */
+export async function listGithubIssues(
+  accessToken: string,
+  owner: string,
+  name: string,
+  options: { state?: string; maxPages?: number } = {},
+): Promise<GithubIssue[]> {
+  const state = options.state ?? "all";
+  const items = await githubGetAll<GithubIssueResponse>(
+    (page, perPage) =>
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues?state=${state}&sort=updated&direction=desc&per_page=${perPage}&page=${page}`,
+    accessToken,
+    { perPage: 100, maxPages: options.maxPages ?? 2 },
+  );
+  return items
+    .filter((item) => item.pull_request == null)
+    .map(toGithubIssue);
+}
+
+/** Recent comment on an issue (body only — no reactions, no edits). */
+export interface GithubIssueComment {
+  id: number;
+  authorLogin: string | null;
+  body: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+interface GithubCommentResponse {
+  id: number;
+  user: { login?: string } | null;
+  body?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/**
+ * List comments for one issue, newest last from the API — callers slice the
+ * tail to keep only recent activity. Bounded pages, never unbounded.
+ */
+export async function listGithubIssueComments(
+  accessToken: string,
+  owner: string,
+  name: string,
+  issueNumber: number,
+  maxPages = 1,
+): Promise<GithubIssueComment[]> {
+  const items = await githubGetAll<GithubCommentResponse>(
+    (page, perPage) =>
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${issueNumber}/comments?per_page=${perPage}&page=${page}`,
+    accessToken,
+    { perPage: 100, maxPages },
+  );
+  return items.map((item) => ({
+    id: item.id,
+    authorLogin: item.user?.login ?? null,
+    body: item.body ?? null,
+    createdAt: item.created_at ?? null,
+    updatedAt: item.updated_at ?? null,
+  }));
+}
+
 /**
  * Fetch the authenticated GitHub user's profile. The access token is only
  * ever sent in the Authorization header — never logged, never in URLs.
- */
-export async function fetchGithubProfile(
+ */export async function fetchGithubProfile(
   accessToken: string,
 ): Promise<GithubProfile> {
   const res = await fetch("https://api.github.com/user", {

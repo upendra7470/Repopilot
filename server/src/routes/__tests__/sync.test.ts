@@ -99,6 +99,14 @@ vi.mock("../../services/github-provider.js", async (importOriginal) => {
       fail();
       return [];
     }),
+    listGithubIssues: vi.fn(async () => {
+      fail();
+      return [];
+    }),
+    listGithubIssueComments: vi.fn(async () => {
+      fail();
+      return [];
+    }),
   };
 });
 

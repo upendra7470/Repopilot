@@ -340,6 +340,7 @@ export const syncRuns = pgTable(
     fileCount: integer("file_count").default(0).notNull(),
     contributorCount: integer("contributor_count").default(0).notNull(),
     prCount: integer("pr_count").default(0).notNull(),
+    issueCount: integer("issue_count").default(0).notNull(),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     finishedAt: timestamp("finished_at"),
   },
@@ -504,3 +505,190 @@ export type PrFile = typeof prFiles.$inferSelect;
 export type NewPrFile = typeof prFiles.$inferInsert;
 export type PrAnalysis = typeof prAnalyses.$inferSelect;
 export type NewPrAnalysis = typeof prAnalyses.$inferInsert;
+
+/**
+ * GitHub issues (Phase 9 ingestion). Identity mirrors PRs: stable GitHub
+ * issue ID plus the human-facing number, both unique per repository.
+ * Pull requests are NEVER stored here — the issues API returns them and
+ * the provider layer filters them out before persistence.
+ *
+ * Labels/assignees use structured JSON arrays (sorted names/logins):
+ * issues are filter dimensions, not join-heavy entities, so normalized
+ * label tables would add complexity without query benefit.
+ */
+export const issues = pgTable(
+  "issues",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }).notNull(),
+    number: integer("number").notNull(),
+    title: varchar("title", { length: 500 }),
+    body: text("body"),
+    state: varchar("state", { length: 20 }).default("open").notNull(),
+    stateReason: varchar("state_reason", { length: 50 }),
+    authorLogin: varchar("author_login", { length: 255 }),
+    authorGithubId: varchar("author_github_id", { length: 255 }),
+    authorAssociation: varchar("author_association", { length: 50 }),
+    htmlUrl: text("html_url"),
+    locked: boolean("locked").default(false).notNull(),
+    commentsCount: integer("comments_count").default(0).notNull(),
+    labels: json("labels").$type<string[]>(),
+    milestoneNumber: integer("milestone_number"),
+    milestoneTitle: varchar("milestone_title", { length: 255 }),
+    milestoneState: varchar("milestone_state", { length: 20 }),
+    assignees: json("assignees").$type<string[]>(),
+    githubCreatedAt: timestamp("github_created_at"),
+    githubUpdatedAt: timestamp("github_updated_at"),
+    closedAt: timestamp("closed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("issues_repo_github_idx").on(table.repositoryId, table.githubId),
+    uniqueIndex("issues_repo_number_idx").on(table.repositoryId, table.number),
+    index("issues_repo_idx").on(table.repositoryId),
+    index("issues_repo_state_idx").on(table.repositoryId, table.state),
+    index("issues_repo_updated_idx").on(table.repositoryId, table.githubUpdatedAt),
+  ],
+);
+
+/**
+ * Bounded recent comments per issue (metadata + truncated body).
+ * Only the newest N comments are kept during sync; older rows are pruned
+ * so comment storage cannot grow unboundedly per issue.
+ */
+export const issueComments = pgTable(
+  "issue_comments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    issueId: uuid("issue_id")
+      .references(() => issues.id, { onDelete: "cascade" })
+      .notNull(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }).notNull(),
+    authorLogin: varchar("author_login", { length: 255 }),
+    body: text("body"),
+    githubCreatedAt: timestamp("github_created_at"),
+    githubUpdatedAt: timestamp("github_updated_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("issue_comments_issue_github_idx").on(table.issueId, table.githubId),
+    index("issue_comments_issue_idx").on(table.issueId),
+    index("issue_comments_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Issue ↔ PR links from explicit GitHub evidence only (closing keywords
+ * or `#number` references in the PR title/body). Never inferred from
+ * title similarity. `relation` is `closed_by` or `referenced_by`;
+ * `evidence` records the source (e.g. `pr-body:87:fixes #42`).
+ */
+export const issuePrLinks = pgTable(
+  "issue_pr_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    issueId: uuid("issue_id")
+      .references(() => issues.id, { onDelete: "cascade" })
+      .notNull(),
+    pullRequestId: uuid("pull_request_id")
+      .references(() => pullRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    relation: varchar("relation", { length: 20 }).notNull(),
+    evidence: varchar("evidence", { length: 500 }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("issue_pr_links_issue_pr_relation_idx").on(
+      table.issueId,
+      table.pullRequestId,
+      table.relation,
+    ),
+    index("issue_pr_links_issue_idx").on(table.issueId),
+    index("issue_pr_links_pr_idx").on(table.pullRequestId),
+  ],
+);
+
+/**
+ * Issue ↔ commit links from explicit references (`#42`, `GH-42`) in the
+ * commit message. File evidence is derived through commit_files — never
+ * duplicated here.
+ */
+export const issueCommitLinks = pgTable(
+  "issue_commit_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    issueId: uuid("issue_id")
+      .references(() => issues.id, { onDelete: "cascade" })
+      .notNull(),
+    commitId: uuid("commit_id")
+      .references(() => commits.id, { onDelete: "cascade" })
+      .notNull(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    evidence: varchar("evidence", { length: 500 }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("issue_commit_links_issue_commit_idx").on(
+      table.issueId,
+      table.commitId,
+    ),
+    index("issue_commit_links_issue_idx").on(table.issueId),
+  ],
+);
+
+/**
+ * Cached AI issue analyses (Phase 9). Same fingerprint strategy as PRs:
+ * one completed analysis per evidence fingerprint.
+ */
+export const issueAnalyses = pgTable(
+  "issue_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    issueId: uuid("issue_id")
+      .references(() => issues.id, { onDelete: "cascade" })
+      .notNull(),
+    evidenceFingerprint: varchar("evidence_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    model: varchar("model", { length: 255 }),
+    summary: text("summary"),
+    assessment: varchar("assessment", { length: 20 }),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("issue_analyses_issue_fingerprint_idx").on(
+      table.issueId,
+      table.evidenceFingerprint,
+    ),
+    index("issue_analyses_repo_idx").on(table.repositoryId),
+  ],
+);
+
+export type Issue = typeof issues.$inferSelect;
+export type NewIssue = typeof issues.$inferInsert;
+export type IssueComment = typeof issueComments.$inferSelect;
+export type NewIssueComment = typeof issueComments.$inferInsert;
+export type IssuePrLink = typeof issuePrLinks.$inferSelect;
+export type NewIssuePrLink = typeof issuePrLinks.$inferInsert;
+export type IssueCommitLink = typeof issueCommitLinks.$inferSelect;
+export type NewIssueCommitLink = typeof issueCommitLinks.$inferInsert;
+export type IssueAnalysis = typeof issueAnalyses.$inferSelect;
+export type NewIssueAnalysis = typeof issueAnalyses.$inferInsert;

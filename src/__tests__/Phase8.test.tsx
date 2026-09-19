@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { IssuesPage } from '../pages/IssuesPage';
 import { CICDPage } from '../pages/CICDPage';
 import { IncidentsPage } from '../pages/IncidentsPage';
 import { ComponentsPage } from '../pages/ComponentsPage';
@@ -45,7 +44,6 @@ describe('Phase 8 unfinished sections are honest', () => {
   });
 
   it.each([
-    ['Issues', IssuesPage],
     ['CI/CD', CICDPage],
     ['Incidents', IncidentsPage],
     ['Components', ComponentsPage],

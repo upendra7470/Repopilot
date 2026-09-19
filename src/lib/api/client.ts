@@ -146,7 +146,6 @@ class ApiClient {
     const suffix = state ? `?state=${encodeURIComponent(state)}` : '';
     return this.request<PrSummary[]>(`/api/repositories/${id}/pulls${suffix}`);
   }
-
   async getPullRequest(id: string, prNumber: number): Promise<PrDetail> {
     return this.request<PrDetail>(`/api/repositories/${id}/pulls/${prNumber}`);
   }
@@ -170,6 +169,52 @@ class ApiClient {
     );
   }
 
+  async listIssues(
+    id: string,
+    params?: {
+      state?: string;
+      label?: string;
+      author?: string;
+      signal?: string;
+      sort?: string;
+      page?: number;
+      perPage?: number;
+    },
+  ): Promise<IssueListPage> {
+    const search = new URLSearchParams();
+    if (params?.state) search.set('state', params.state);
+    if (params?.label) search.set('label', params.label);
+    if (params?.author) search.set('author', params.author);
+    if (params?.signal) search.set('signal', params.signal);
+    if (params?.sort) search.set('sort', params.sort);
+    if (params?.page) search.set('page', String(params.page));
+    if (params?.perPage) search.set('per_page', String(params.perPage));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return this.request<IssueListPage>(`/api/repositories/${id}/issues${suffix}`);
+  }
+
+  async getIssue(id: string, issueNumber: number): Promise<IssueDetail> {
+    return this.request<IssueDetail>(`/api/repositories/${id}/issues/${issueNumber}`);
+  }
+
+  async getIssueIntelligence(id: string, issueNumber: number): Promise<IssueIntelligence> {
+    return this.request<IssueIntelligence>(
+      `/api/repositories/${id}/issues/${issueNumber}/intelligence`,
+    );
+  }
+
+  async getIssueAnalysis(id: string, issueNumber: number): Promise<IssueAnalysisState> {
+    return this.request<IssueAnalysisState>(
+      `/api/repositories/${id}/issues/${issueNumber}/analysis`,
+    );
+  }
+
+  async analyzeIssue(id: string, issueNumber: number): Promise<IssueAnalysisState> {
+    return this.request<IssueAnalysisState>(
+      `/api/repositories/${id}/issues/${issueNumber}/analyze`,
+      { method: 'POST' },
+    );
+  }
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -293,6 +338,7 @@ export interface SyncResult {
   fileCount: number;
   contributorCount: number;
   prCount: number;
+  issueCount: number;
   truncatedTree: boolean;
   durationMs: number;
 }
@@ -426,6 +472,112 @@ export interface PrAnalysisState {
   model: string | null;
   cached: boolean;
   analysis: AiAnalysis | null;
+  error: { code: string; message: string } | null;
+}
+
+export interface IssueSignal {
+  type: string;
+  severity: 'info' | 'low' | 'medium' | 'high';
+  title: string;
+  detail: string;
+  evidence: Array<{ label: string; value: string }>;
+}
+
+export interface IssueDimensions {
+  ageDays: number | null;
+  daysSinceUpdate: number | null;
+  commentCount: number;
+  recentCommentCount: number;
+  linkedPrCount: number;
+  linkedCommitCount: number;
+  codeConnected: boolean;
+  riskOverlapCount: number;
+  state: string;
+}
+
+export interface IssueSummary {
+  id: string;
+  number: number;
+  title: string | null;
+  state: string;
+  stateReason: string | null;
+  authorLogin: string | null;
+  authorAssociation: string | null;
+  htmlUrl: string | null;
+  locked: boolean;
+  commentsCount: number;
+  labels: string[];
+  milestoneTitle: string | null;
+  assignees: string[];
+  githubCreatedAt: string | null;
+  githubUpdatedAt: string | null;
+  closedAt: string | null;
+  signals: IssueSignal[];
+  dimensions: IssueDimensions;
+}
+
+export interface IssueListPage {
+  data: IssueSummary[];
+  pagination: { page: number; perPage: number; total: number };
+}
+
+export interface IssueDetail {
+  issue: IssueSummary & { body: string | null };
+  comments: Array<{
+    githubId: string;
+    authorLogin: string | null;
+    body: string | null;
+    githubCreatedAt: string | null;
+  }>;
+  linkedPrs: Array<{
+    number: number;
+    title: string | null;
+    state: string;
+    merged: boolean;
+    relation: string;
+    evidence: string | null;
+  }>;
+  linkedCommits: Array<{
+    sha: string;
+    message: string | null;
+    authorLogin: string | null;
+    committedAt: string | null;
+  }>;
+  files: Array<{
+    path: string;
+    area: string;
+    viaCommits: string[];
+    windowChanges: number;
+    hot: boolean;
+  }>;
+}
+
+export interface IssueIntelligence {
+  signals: IssueSignal[];
+  dimensions: IssueDimensions;
+  linkedPrs: IssueDetail['linkedPrs'];
+  linkedCommits: IssueDetail['linkedCommits'];
+  files: IssueDetail['files'];
+  riskFindings: Array<{ id: string; type: string; severity: string; title: string }>;
+  recentComments: IssueDetail['comments'];
+}
+
+export interface IssueAiAnalysis {
+  summary: string;
+  assessment: 'low' | 'medium' | 'high' | 'unknown';
+  keySignals: Array<{ claim: string; evidenceIds: string[] }>;
+  engineeringContext: Array<{ claim: string; evidenceIds: string[] }>;
+  evidence: Array<{ id: string; kind: string; label: string; detail: string }>;
+  possibleInvestigationPaths: Array<{ text: string; evidenceIds: string[] }>;
+  unknowns: string[];
+}
+
+export interface IssueAnalysisState {
+  status: 'completed' | 'failed' | 'unavailable' | 'pending';
+  fingerprint: string;
+  model: string | null;
+  cached: boolean;
+  analysis: IssueAiAnalysis | null;
   error: { code: string; message: string } | null;
 }
 

@@ -222,6 +222,7 @@ export async function repositoryRoutes(app: FastifyInstance): Promise<void> {
             fileCount: { type: "number" },
             contributorCount: { type: "number" },
             prCount: { type: "number" },
+            issueCount: { type: "number" },
             truncatedTree: { type: "boolean" },
             durationMs: { type: "number" },
           },

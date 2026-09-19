@@ -22,6 +22,7 @@ import { userHasRepositoryAccess } from "./repository.service.js";
 import { getLogger } from "../utils/logger.js";
 import { chunk } from "./sync-utils.js";
 import { syncPullRequests } from "./pr-sync.service.js";
+import { syncIssues } from "./issue-sync.service.js";
 
 /** Domain error with an explicit HTTP mapping for the route layer. */
 export type SyncHttpStatus = 400 | 403 | 404 | 409 | 502 | 503;
@@ -46,6 +47,7 @@ export interface SyncSummary {
   fileCount: number;
   contributorCount: number;
   prCount: number;
+  issueCount: number;
   truncatedTree: boolean;
   durationMs: number;
 }
@@ -518,6 +520,16 @@ export async function startRepositorySync(
       repo.name,
     );
 
+    // 8. Issues (bounded, read-only; runs after PRs so issue↔PR links
+    // resolve against freshly synced PRs).
+    await setRunStage(runId, "issues");
+    const { issueCount } = await syncIssues(
+      repositoryId,
+      credential,
+      repo.owner,
+      repo.name,
+    );
+
     const finishedAt = new Date();
     await db
       .update(syncRuns)
@@ -529,6 +541,7 @@ export async function startRepositorySync(
         fileCount,
         contributorCount: contributorIds.size,
         prCount,
+        issueCount,
         finishedAt,
       })
       .where(eq(syncRuns.id, runId));
@@ -549,6 +562,7 @@ export async function startRepositorySync(
         commits: commitCount,
         files: fileCount,
         prs: prCount,
+        issues: issueCount,
       },
       "Repository sync succeeded",
     );
@@ -561,6 +575,7 @@ export async function startRepositorySync(
       fileCount,
       contributorCount: contributorIds.size,
       prCount,
+      issueCount,
       truncatedTree,
       durationMs: Date.now() - started,
     };
