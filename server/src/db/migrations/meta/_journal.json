@@ -57,6 +57,13 @@
       "when": 1789793017348,
       "tag": "0007_ci-ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789805191304,
+      "tag": "0008_incident-analyses",
+      "breakpoints": true
     }
   ]
 }

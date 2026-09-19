@@ -9,7 +9,7 @@ import {
   ShieldAlert,
   FileText,
   Users,
-} from 'lucide-react';
+} from 'lucide-react'
 import clsx from 'clsx';
 import { LoadingState } from '../components/ui/LoadingState';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -50,6 +50,7 @@ const EVENT_ICON: Record<TimelineItem['kind'], React.ReactNode> = {
   pr: <GitPullRequest size={13} className="text-accent" />,
   issue: <Bug size={13} className="text-warning" />,
   ci_run: <Activity size={13} className="text-info" />,
+  incident: <ShieldAlert size={13} className="text-danger" />,
 };
 
 function eventHref(repositoryId: string, item: TimelineItem): string {
@@ -60,6 +61,8 @@ function eventHref(repositoryId: string, item: TimelineItem): string {
       return `/issues?repositoryId=${repositoryId}`;
     case 'run':
       return `/ci-cd?repositoryId=${repositoryId}`;
+    case 'incident':
+      return `/incidents?repositoryId=${repositoryId}&incident=${encodeURIComponent(item.ref.value)}`;
     case 'commit':
     default:
       return `/repository/${repositoryId}?tab=timeline`;

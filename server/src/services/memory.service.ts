@@ -12,6 +12,7 @@ import {
   pullRequests,
 } from "../db/schema.js";
 import { getLogger } from "../utils/logger.js";
+import { detectIncidents } from "./incident-intelligence.service.js";
 
 /**
  * Engineering Memory (Phase 6): deterministic, factual history derived
@@ -614,13 +615,13 @@ export async function getFilesChangedByContributor(
 }
 
 export interface TimelineRef {
-  entity: "commit" | "pr" | "issue" | "run";
-  /** commit SHA, PR/issue number, or run GitHub ID. */
+  entity: "commit" | "pr" | "issue" | "run" | "incident";
+  /** commit SHA, PR/issue number, run GitHub ID, or incident fingerprint. */
   value: string;
 }
 
 export interface TimelineItem {
-  kind: "commit" | "pr" | "issue" | "ci_run";
+  kind: "commit" | "pr" | "issue" | "ci_run" | "incident";
   at: Date | null;
   title: string;
   subtitle: string | null;
@@ -704,6 +705,10 @@ export async function getEngineeringTimeline(
   ]);
   const workflowNameById = new Map(workflowRows.map((w) => [w.id, w.name]));
 
+  // Incident markers (one per deterministic candidate — the constituent
+  // CI runs remain as their own events; no duplication of evidence).
+  const incidents = await detectIncidents(repositoryId);
+
   const items: TimelineItem[] = [
     ...commitRows.map((c): TimelineItem => ({
       kind: "commit",
@@ -744,6 +749,16 @@ export async function getEngineeringTimeline(
       state: run.status === "completed" ? run.conclusion : run.status,
       ref: { entity: "run", value: run.githubId },
       workflowName: workflowNameById.get(run.workflowId) ?? null,
+    })),
+    ...incidents.map((incident): TimelineItem => ({
+      kind: "incident",
+      at: incident.burstEndAt,
+      title: `Incident candidate · ${incident.workflowName ?? "workflow"} on ${incident.branch}`,
+      subtitle: incident.status === "recovered" ? "recovery observed" : "active pattern",
+      authorLogin: null,
+      state: incident.status,
+      ref: { entity: "incident", value: incident.fingerprint },
+      workflowName: incident.workflowName,
     })),
   ];
 

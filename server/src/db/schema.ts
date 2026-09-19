@@ -851,3 +851,39 @@ export type CiJob = typeof ciJobs.$inferSelect;
 export type NewCiJob = typeof ciJobs.$inferInsert;
 export type CiAnalysis = typeof ciAnalyses.$inferSelect;
 export type NewCiAnalysis = typeof ciAnalyses.$inferInsert;
+
+/**
+ * Cached AI incident analyses (Phase 11). Incidents themselves are
+ * detected dynamically on every read (never persisted) — only analyses
+ * are cached, keyed by repository plus the incident's evidence
+ * fingerprint, which doubles as the incident's stable identity.
+ */
+export const incidentAnalyses = pgTable(
+  "incident_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    evidenceFingerprint: varchar("evidence_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    model: varchar("model", { length: 255 }),
+    summary: text("summary"),
+    assessment: varchar("assessment", { length: 20 }),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("incident_analyses_repo_fingerprint_idx").on(
+      table.repositoryId,
+      table.evidenceFingerprint,
+    ),
+    index("incident_analyses_repo_idx").on(table.repositoryId),
+  ],
+);
+
+export type IncidentAnalysis = typeof incidentAnalyses.$inferSelect;
+export type NewIncidentAnalysis = typeof incidentAnalyses.$inferInsert;

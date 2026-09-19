@@ -53,7 +53,7 @@ const sections: NavSection[] = [
       { id: 'pull-requests', label: 'PR Intelligence', icon: GitPullRequest, status: 'active' },
       { id: 'issues', label: 'Issues', icon: AlertCircle, status: 'active' },
       { id: 'ci-cd', label: 'CI/CD', icon: Activity, status: 'active' },
-      { id: 'incidents', label: 'Incidents', icon: AlertTriangle, status: 'soon' },
+      { id: 'incidents', label: 'Incidents', icon: AlertTriangle, status: 'active' },
     ],
   },
   {

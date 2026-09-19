@@ -3,6 +3,7 @@ import { getRepositorySyncCounts } from "./repo-sync.service.js";
 import { getEngineeringTimeline, getMemoryOverview } from "./memory.service.js";
 import type { TimelineItem } from "./memory.service.js";
 import { analyzeRepositoryRisks } from "./risk.service.js";
+import { detectIncidents } from "./incident-intelligence.service.js";
 import { listPullRequests } from "./pr-intelligence.service.js";
 import { listIssues } from "./issue-intelligence.service.js";
 import { getCiSummary } from "./ci-intelligence.service.js";
@@ -17,7 +18,7 @@ import { getLogger } from "../utils/logger.js";
  */
 
 export interface AttentionItem {
-  kind: "risk" | "ci" | "pr" | "issue";
+  kind: "risk" | "ci" | "pr" | "issue" | "incident";
   severity: string;
   title: string;
   detail: string;
@@ -83,7 +84,7 @@ export async function getRepositoryOverview(
     return null;
   }
 
-  const [syncCounts, riskReport, prs, openIssues, closedIssues, staleIssues, ci, events] =
+  const [syncCounts, riskReport, prs, openIssues, closedIssues, staleIssues, ci, events, incidents] =
     await Promise.all([
       getRepositorySyncCounts(repositoryId),
       analyzeRepositoryRisks(repositoryId),
@@ -93,6 +94,7 @@ export async function getRepositoryOverview(
       listIssues(repositoryId, { state: "open", signal: "stale_open", perPage: 5 }),
       getCiSummary(repositoryId),
       getEngineeringTimeline(repositoryId, 15),
+      detectIncidents(repositoryId),
     ]);
 
   const openPrs = prs.filter((p) => p.state === "open");
@@ -117,6 +119,20 @@ export async function getRepositoryOverview(
         href: href("/risks"),
       });
     }
+  }
+
+  // Incidents: deterministic candidates with evidence behind them.
+  for (const incident of incidents.slice(0, 3)) {
+    attention.push({
+      kind: "incident",
+      severity: incident.severity,
+      title: incident.title,
+      detail:
+        incident.status === "recovered"
+          ? "Recovery observed — inspect the reconstruction before closing out."
+          : "Active disruption pattern — inspect the evidence chain.",
+      href: href("/incidents"),
+    });
   }
 
   // CI: streaks, recent failures, unstable workflows, PRs with failing CI.

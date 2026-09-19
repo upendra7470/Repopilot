@@ -6,6 +6,7 @@ import {
   AlertCircle,
   Activity,
   Clock,
+  ShieldAlert,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { LoadingState } from '../components/ui/LoadingState';
@@ -20,7 +21,7 @@ import {
   type TimelineItem,
 } from '../lib/api/client';
 
-type KindFilter = 'all' | 'commit' | 'pr' | 'issue' | 'ci_run';
+type KindFilter = 'all' | 'commit' | 'pr' | 'issue' | 'ci_run' | 'incident';
 
 const KIND_TABS: Array<{ key: KindFilter; label: string }> = [
   { key: 'all', label: 'All' },
@@ -28,6 +29,7 @@ const KIND_TABS: Array<{ key: KindFilter; label: string }> = [
   { key: 'pr', label: 'PRs' },
   { key: 'issue', label: 'Issues' },
   { key: 'ci_run', label: 'CI runs' },
+  { key: 'incident', label: 'Incidents' },
 ];
 
 const KIND_META: Record<TimelineItem['kind'], { icon: React.ReactNode; label: string }> = {
@@ -35,6 +37,7 @@ const KIND_META: Record<TimelineItem['kind'], { icon: React.ReactNode; label: st
   pr: { icon: <GitPullRequest size={13} className="text-accent" />, label: 'PR' },
   issue: { icon: <AlertCircle size={13} className="text-warning" />, label: 'Issue' },
   ci_run: { icon: <Activity size={13} className="text-info" />, label: 'CI run' },
+  incident: { icon: <ShieldAlert size={13} className="text-danger" />, label: 'Incident' },
 };
 
 function formatTimestamp(iso: string | null): string {
@@ -79,6 +82,8 @@ function eventHref(repositoryId: string, item: TimelineItem): string {
       return `/issues?repositoryId=${repositoryId}`;
     case 'run':
       return `/ci-cd?repositoryId=${repositoryId}`;
+    case 'incident':
+      return `/incidents?repositoryId=${repositoryId}&incident=${encodeURIComponent(item.ref.value)}`;
     case 'commit':
     default:
       return `/repository/${repositoryId}?tab=timeline`;

@@ -268,6 +268,34 @@ class ApiClient {
       `/api/repositories/${id}/ci/runs/${runId}/analyze`,
       { method: 'POST' },
     );
+  }
+
+  async listIncidents(
+    id: string,
+    params?: { status?: string; severity?: string },
+  ): Promise<{ data: IncidentSummary[] }> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set('status', params.status);
+    if (params?.severity) search.set('severity', params.severity);
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return this.request<{ data: IncidentSummary[] }>(`/api/repositories/${id}/incidents${suffix}`);
+  }
+
+  async getIncident(id: string, fingerprint: string): Promise<IncidentDetail> {
+    return this.request<IncidentDetail>(`/api/repositories/${id}/incidents/${fingerprint}`);
+  }
+
+  async getIncidentAnalysis(id: string, fingerprint: string): Promise<IncidentAnalysisState> {
+    return this.request<IncidentAnalysisState>(
+      `/api/repositories/${id}/incidents/${fingerprint}/analysis`,
+    );
+  }
+
+  async analyzeIncident(id: string, fingerprint: string): Promise<IncidentAnalysisState> {
+    return this.request<IncidentAnalysisState>(
+      `/api/repositories/${id}/incidents/${fingerprint}/analyze`,
+      { method: 'POST' },
+    );
   }  async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -758,6 +786,68 @@ export interface CiAnalysisState {
   error: { code: string; message: string } | null;
 }
 
+export interface IncidentEvidenceRef {
+  kind: 'run' | 'workflow' | 'commit' | 'pr' | 'issue' | 'file' | 'risk' | 'contributor';
+  value: string;
+  label: string;
+}
+
+export interface IncidentTimelineEntry {
+  at: string | null;
+  kind: 'ci_failure' | 'ci_recovery' | 'commit' | 'pr' | 'issue';
+  title: string;
+  detail: string | null;
+  ref: IncidentEvidenceRef;
+}
+
+export interface IncidentSummary {
+  fingerprint: string;
+  repositoryId: string;
+  title: string;
+  status: 'active' | 'recovered';
+  severity: 'medium' | 'high';
+  confidence: string;
+  confidenceReason: string;
+  workflowGithubId: string;
+  workflowName: string | null;
+  branch: string;
+  burstLength: number;
+  burstStartAt: string | null;
+  burstEndAt: string | null;
+  recoveryRunGithubId: string | null;
+  recoveryAt: string | null;
+  summary: string;
+  timeline: IncidentTimelineEntry[];
+  evidence: IncidentEvidenceRef[];
+  linkedPrNumbers: number[];
+  linkedIssueNumbers: number[];
+  filePaths: string[];
+  riskFindingIds: string[];
+  contributorLogins: string[];
+  unknowns: string[];
+}
+
+export type IncidentDetail = IncidentSummary;
+
+export interface IncidentAiAnalysis {
+  summary: string;
+  assessment: 'low' | 'medium' | 'high' | 'unknown';
+  likelyContributingFactors: Array<{ claim: string; evidenceIds: string[] }>;
+  confirmedFacts: Array<{ claim: string; evidenceIds: string[] }>;
+  evidence: Array<{ id: string; kind: string; label: string; detail: string }>;
+  unknowns: string[];
+  investigationNextSteps: string[];
+}
+
+export interface IncidentAnalysisState {
+  status: 'completed' | 'failed' | 'unavailable' | 'pending';
+  fingerprint: string;
+  model: string | null;
+  cached: boolean;
+  analysis: IncidentAiAnalysis | null;
+  error: { code: string; message: string } | null;
+}
+
 export interface ActivityEvent {
   kind: string;
   sha: string | null;
@@ -834,18 +924,18 @@ export interface RepoFileItem {
 }
 
 export interface TimelineItem {
-  kind: 'commit' | 'pr' | 'issue' | 'ci_run';
+  kind: 'commit' | 'pr' | 'issue' | 'ci_run' | 'incident';
   at: string | null;
   title: string;
   subtitle: string | null;
   authorLogin: string | null;
   state: string | null;
-  ref: { entity: 'commit' | 'pr' | 'issue' | 'run'; value: string };
+  ref: { entity: 'commit' | 'pr' | 'issue' | 'run' | 'incident'; value: string };
   workflowName: string | null;
 }
 
 export interface AttentionItem {
-  kind: 'risk' | 'ci' | 'pr' | 'issue';
+  kind: 'risk' | 'ci' | 'pr' | 'issue' | 'incident';
   severity: string;
   title: string;
   detail: string;

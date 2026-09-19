@@ -50,7 +50,7 @@ export const CI_THRESHOLDS = {
 } as const;
 
 /** Terminal conclusions counted as failures (not cancellations/skips). */
-const FAILURE_CONCLUSIONS = new Set([
+export const FAILURE_CONCLUSIONS = new Set([
   "failure",
   "timed_out",
   "startup_failure",
