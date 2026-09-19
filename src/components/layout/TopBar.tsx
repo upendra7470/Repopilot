@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Menu, Search, Bell, LogOut, Sun, Moon } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 
 /** Truthful breadcrumb derived from the current route — never hardcoded. */
@@ -57,7 +57,17 @@ function UserInitials({ login }: { login: string }) {
 
 export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const breadcrumb = useBreadcrumb();
+
+  const handleSignOut = useCallback(() => {
+    // Clear the session first, then land on the public page — never the
+    // reverse, or the protected redirect would win the race to /login.
+    void (async () => {
+      await logout();
+      navigate('/', { replace: true });
+    })();
+  }, [logout, navigate]);
   const [theme, toggleTheme] = useTheme();
 
   return (
@@ -129,7 +139,7 @@ export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
               {user.login}
             </span>
             <button
-              onClick={() => void logout()}
+              onClick={handleSignOut}
               className="rounded border border-transparent p-1.5 text-text-muted transition-colors hover:border-border-primary hover:text-text-secondary"
               aria-label="Sign out"
               title="Sign out"

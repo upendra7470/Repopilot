@@ -62,7 +62,7 @@ export function LoginPage() {
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent/90"
           >
             <LogIn size={16} />
-            Sign in with GitHub
+            Continue with GitHub
           </button>
         ) : (
           <a
@@ -70,7 +70,7 @@ export function LoginPage() {
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent/90"
           >
             <LogIn size={16} />
-            Sign in with GitHub
+            Continue with GitHub
           </a>
         )}
 

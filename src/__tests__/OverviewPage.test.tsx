@@ -123,6 +123,30 @@ describe('OverviewPage real command center', () => {
     vi.restoreAllMocks();
   });
 
+  it('onboards first-time users with real next steps, never demo content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        const u = String(url);
+        if (u.endsWith('/api/repositories')) {
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${u}`));
+      }),
+    );
+    renderOverview();
+
+    expect(await screen.findByText('Welcome to RepoPilot')).toBeInTheDocument();
+    expect(screen.getByText('Connect a repository')).toBeInTheDocument();
+    expect(screen.getByText('Sync engineering data')).toBeInTheDocument();
+    expect(screen.getByText(/Investigate with evidence/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Choose repository' })).toHaveAttribute(
+      'href',
+      '/repository',
+    );
+    expect(document.body.textContent).not.toMatch(/nexuspay/i);
+  });
+
   it('renders repository context, counts, attention, and events from the aggregate', async () => {
     vi.stubGlobal(
       'fetch',

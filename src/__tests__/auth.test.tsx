@@ -154,12 +154,12 @@ describe('frontend auth boundary', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+      expect(screen.getByText('Continue with GitHub')).toBeInTheDocument();
     });
     // No dead-end navigation: the sign-in control is a button, not a link.
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Sign in with GitHub'));
+    fireEvent.click(screen.getByText('Continue with GitHub'));
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
         'Cannot reach the RepoPilot server',
@@ -178,13 +178,13 @@ describe('frontend auth boundary', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+      expect(screen.getByText('Continue with GitHub')).toBeInTheDocument();
     });
-    const link = screen.getByRole('link', { name: 'Sign in with GitHub' });
+    const link = screen.getByRole('link', { name: 'Continue with GitHub' });
     expect(link.getAttribute('href')).toContain('/api/auth/github');
   });
 
-  it('protected route redirects to login when unauthenticated', async () => {
+  it('protected route redirects to the public landing when unauthenticated', async () => {
     vi.stubGlobal('fetch', mockFetchSession(false));
     render(
       <MemoryRouter initialEntries={['/overview']}>
@@ -229,7 +229,7 @@ describe('frontend auth boundary', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+      expect(screen.getByText('Continue with GitHub')).toBeInTheDocument();
     });
     expect(screen.getByRole('alert')).toHaveTextContent('GitHub sign-in failed');
   });

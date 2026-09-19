@@ -94,6 +94,22 @@ describe("Engineering Brief API", () => {
     expect(viaA.counts.commits).toBe(1);
     expect(viaB.counts.commits).toBe(0);
     expect(JSON.stringify(viaB)).not.toContain("d".repeat(40));
+
+    // Strangers are denied on every brief endpoint, including analysis.
+    for (const [method, url] of [
+      ["GET", `/api/repositories/${record.id}/brief/analysis`],
+      ["POST", `/api/repositories/${record.id}/brief/analyze`],
+    ] as const) {
+      expect(
+        (
+          await app.inject({
+            method,
+            url,
+            headers: { cookie: stranger.cookie },
+          })
+        ).statusCode,
+      ).toBe(404);
+    }
   });
 
   it("validates the window parameter", async () => {

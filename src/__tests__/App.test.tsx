@@ -39,12 +39,23 @@ describe('App', () => {
     vi.restoreAllMocks();
   });
 
-  it('redirects unauthenticated users to the login page', async () => {
+  it('shows the public landing page to unauthenticated users', async () => {
     vi.stubGlobal('fetch', mockSession(false));
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+      expect(screen.getByText('AI Engineering Intelligence for GitHub')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+  });
+
+  it('redirects unauthenticated deep links to the public landing', async () => {
+    vi.stubGlobal('fetch', mockSession(false));
+    window.history.pushState({}, '', '/risks');
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('AI Engineering Intelligence for GitHub')).toBeInTheDocument();
     });
   });
 
@@ -65,8 +76,35 @@ describe('App', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument();
+      expect(screen.getByText('Continue with GitHub')).toBeInTheDocument();
     });
+  });
+
+  it('sends authenticated users at / straight to the workspace', async () => {
+    vi.stubGlobal('fetch', mockSession(true));
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByText('AI Engineering Intelligence for GitHub')).not.toBeInTheDocument();
+    });
+  });
+
+  it('returns to the public landing after logout', async () => {
+    vi.stubGlobal('fetch', mockSession(true));
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('testuser')).toBeInTheDocument();
+    });
+
+    const signOut = screen.getByRole('button', { name: /sign out/i });
+    signOut.click();
+
+    await waitFor(() => {
+      expect(screen.getByText('AI Engineering Intelligence for GitHub')).toBeInTheDocument();
+    });
+    // No stale identity remains visible.
+    expect(screen.queryByText('testuser')).not.toBeInTheDocument();
   });
 
   it('navigation to /risks works for authenticated users', async () => {

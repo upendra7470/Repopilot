@@ -3,6 +3,7 @@ import { AuthProvider } from './auth/AuthContext';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './pages/LoginPage';
+import { LandingPage } from './pages/LandingPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { RiskPage } from './pages/RiskPage';
 import { PullRequestPage } from './pages/PullRequestPage';
@@ -24,7 +25,8 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* Public: login flow must stay accessible before authentication */}
+          {/* Public: landing + login flow must stay accessible before authentication */}
+          <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           {/* Protected: everything else requires an authenticated session */}
           <Route
@@ -34,7 +36,6 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/" element={<Navigate to="/overview" replace />} />
             <Route path="/overview" element={<OverviewPage />} />
             <Route path="/brief" element={<BriefPage />} />
             <Route path="/risks" element={<RiskPage />} />

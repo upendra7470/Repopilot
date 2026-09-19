@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx';
 import { LoadingState } from '../components/ui/LoadingState';
-import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { Panel } from '../components/ui/Panel';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -195,19 +194,55 @@ export function OverviewPage() {
           onRetry={() => window.location.reload()}
         />
       ) : repos.length === 0 ? (
-        <EmptyState
-          icon={<ShieldAlert size={18} />}
-          title="No connected repositories"
-          description="Connect a GitHub repository and sync it. Overview is built from synced repository data — nothing here is fabricated."
-          action={
-            <Link
-              to="/repository"
-              className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
-            >
-              Go to repositories
-            </Link>
-          }
-        />
+        <Panel
+          title="Welcome to RepoPilot"
+          subtitle="Three steps to your first engineering intelligence workspace. Everything below reads live repository data — nothing is fabricated."
+        >
+          <ol className="space-y-2.5">
+            {[
+              {
+                step: '1',
+                title: 'Connect a repository',
+                text: 'Pick one of your GitHub repositories. RepoPilot stores its identity and your access — never your code.',
+                action: (
+                  <Link
+                    to="/repository"
+                    className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+                  >
+                    Choose repository
+                  </Link>
+                ),
+              },
+              {
+                step: '2',
+                title: 'Sync engineering data',
+                text: 'One click ingests commits, files, contributors, pull requests, issues, and CI runs into PostgreSQL.',
+                action: null,
+              },
+              {
+                step: '3',
+                title: 'Investigate with evidence',
+                text: 'Open risks, PRs, issues, CI, incidents, or the brief. Every claim links back to its evidence; unknowns stay unknown.',
+                action: null,
+              },
+            ].map((item) => (
+              <li key={item.step} className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border-secondary bg-bg-tertiary font-mono text-[11px] text-text-secondary">
+                  {item.step}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium text-text-primary">
+                    {item.title}
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-5 text-text-muted">
+                    {item.text}
+                  </span>
+                  {item.action && <span className="mt-2 block">{item.action}</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </Panel>
       ) : effectiveRepo ? (
         <>
           <RepoContextHeader repo={effectiveRepo} />

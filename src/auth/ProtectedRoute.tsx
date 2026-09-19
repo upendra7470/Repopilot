@@ -6,7 +6,9 @@ import { LoadingState } from '../components/ui/LoadingState';
 /**
  * Renders children only for authenticated users. While the session is being
  * resolved a skeleton is shown (no protected content flash); unauthenticated
- * users are redirected to the public login page.
+ * users are redirected to the public landing page (which links to login).
+ * Landing — not /login — is the single anonymous destination so logout and
+ * deep-link flows can never race between two different redirects.
  */
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -16,7 +18,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   }
 
   if (status === 'unauthenticated') {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
