@@ -19,6 +19,7 @@ import { pullRequestRoutes } from "./routes/pulls.js";
 import { issueRoutes } from "./routes/issues.js";
 import { ciRoutes } from "./routes/ci.js";
 import { incidentRoutes } from "./routes/incidents.js";
+import { briefRoutes } from "./routes/brief.js";
 import { userRoutes } from "./routes/users.js";
 import { repositoryRoutes } from "./routes/repositories.js";
 import "./types/fastify.js";
@@ -117,6 +118,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(issueRoutes, { prefix: "/api" });
   await app.register(ciRoutes, { prefix: "/api" });
   await app.register(incidentRoutes, { prefix: "/api" });
+  await app.register(briefRoutes, { prefix: "/api" });
   await app.register(userRoutes, { prefix: "/api" });
   await app.register(repositoryRoutes, { prefix: "/api" });
 

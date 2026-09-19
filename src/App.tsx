@@ -15,6 +15,7 @@ import { ComponentsPage } from './pages/ComponentsPage';
 import { KnowledgeGraphPage } from './pages/KnowledgeGraphPage';
 import { RepositoryPage } from './pages/RepositoryPage';
 import { RepositoryDetailPage } from './pages/RepositoryDetailPage';
+import { BriefPage } from './pages/BriefPage';
 import { AskRepoPilotPage } from './pages/AskRepoPilotPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -35,6 +36,7 @@ export default function App() {
           >
             <Route path="/" element={<Navigate to="/overview" replace />} />
             <Route path="/overview" element={<OverviewPage />} />
+            <Route path="/brief" element={<BriefPage />} />
             <Route path="/risks" element={<RiskPage />} />
             <Route path="/pull-requests" element={<PullRequestPage />} />
             <Route path="/issues" element={<IssuesPage />} />

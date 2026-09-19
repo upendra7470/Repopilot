@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   FileText,
   Users,
+  ScrollText,
 } from 'lucide-react'
 import clsx from 'clsx';
 import { LoadingState } from '../components/ui/LoadingState';
@@ -243,6 +244,20 @@ export function OverviewPage() {
           ) : (
             effectiveId && (
               <div key={overview.repository.id} className="animate-enter space-y-3">
+                <Panel dense>
+                  <Link
+                    to={`/brief?repositoryId=${effectiveId}`}
+                    className="flex items-center gap-2 hover:underline"
+                  >
+                    <ScrollText size={13} className="shrink-0 text-accent" />
+                    <span className="text-[13px] font-medium text-text-primary">
+                      Open the Engineering Brief
+                    </span>
+                    <span className="text-xs text-text-muted">
+                      windowed summary with evidence, unknowns, and next steps
+                    </span>
+                  </Link>
+                </Panel>
                 {/* Attention: traceable findings only, never scores */}
                 <Panel
                   title={`Attention (${overview.attention.length})`}

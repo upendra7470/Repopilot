@@ -16,6 +16,7 @@ import settingsPageSource from '../pages/SettingsPage?raw';
 import overviewPageSource from '../pages/OverviewPage?raw';
 import timelinePageSource from '../pages/EngineeringMemoryPage?raw';
 import contributorsPageSource from '../pages/ContributorsPage?raw';
+import briefPageSource from '../pages/BriefPage?raw';
 
 /**
  * Static regression guard: production repository flows must never reference
@@ -44,6 +45,8 @@ const productionRepoFlowSources: Array<[string, string]> = [
   ['OverviewPage', overviewPageSource],
   ['EngineeringMemoryPage', timelinePageSource],
   ['ContributorsPage', contributorsPageSource],
+  // Phase 13: the brief composes real intelligence only.
+  ['BriefPage', briefPageSource],
 ];
 
 describe('demo isolation in repository flows', () => {

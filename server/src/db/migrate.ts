@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -17,7 +19,10 @@ async function runMigrations() {
   try {
     logger.info("Running pending database migrations...");
 
-    await migrate(db, { migrationsFolder: "./src/db/migrations" });
+    // Resolve relative to this module so `npm run db:migrate` works from
+    // the repository root as documented (cwd-relative paths break there).
+    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "migrations");
+    await migrate(db, { migrationsFolder });
 
     logger.info("Database migrations completed successfully");
   } catch (err) {

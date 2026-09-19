@@ -64,6 +64,13 @@
       "when": 1789805191304,
       "tag": "0008_incident-analyses",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789809007105,
+      "tag": "0009_brief-analyses",
+      "breakpoints": true
     }
   ]
 }

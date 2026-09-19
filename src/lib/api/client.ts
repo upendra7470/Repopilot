@@ -296,7 +296,29 @@ class ApiClient {
       `/api/repositories/${id}/incidents/${fingerprint}/analyze`,
       { method: 'POST' },
     );
-  }  async getHealth() {
+  }
+
+  async getBrief(id: string, window?: string): Promise<EngineeringBrief> {
+    const suffix = window ? `?window=${encodeURIComponent(window)}` : '';
+    return this.request<EngineeringBrief>(`/api/repositories/${id}/brief${suffix}`);
+  }
+
+  async getBriefAnalysis(id: string, window?: string): Promise<BriefAnalysisState> {
+    const suffix = window ? `?window=${encodeURIComponent(window)}` : '';
+    return this.request<BriefAnalysisState>(
+      `/api/repositories/${id}/brief/analysis${suffix}`,
+    );
+  }
+
+  async analyzeBrief(id: string, window?: string): Promise<BriefAnalysisState> {
+    const suffix = window ? `?window=${encodeURIComponent(window)}` : '';
+    return this.request<BriefAnalysisState>(
+      `/api/repositories/${id}/brief/analyze${suffix}`,
+      { method: 'POST' },
+    );
+  }
+
+  async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
 
@@ -845,6 +867,85 @@ export interface IncidentAnalysisState {
   model: string | null;
   cached: boolean;
   analysis: IncidentAiAnalysis | null;
+  error: { code: string; message: string } | null;
+}
+
+export interface BriefEvidenceItem {
+  id: string;
+  kind: string;
+  label: string;
+  detail: string;
+  entityType: string;
+  entityId: string;
+}
+
+export interface BriefSectionItem {
+  title: string;
+  description: string;
+  severity: string | null;
+  entityType: string;
+  entityId: string;
+  evidenceIds: string[];
+}
+
+export interface BriefRelationship {
+  description: string;
+  path: Array<{ entityType: string; entityId: string; label: string }>;
+  evidenceIds: string[];
+}
+
+export interface EngineeringBrief {
+  repository: {
+    id: string;
+    fullName: string;
+    owner: string;
+    name: string;
+    defaultBranch: string;
+  };
+  generatedAt: string;
+  window: { label: string; days: number; since: string };
+  summary: string[];
+  counts: {
+    commits: number;
+    contributors: number;
+    filesChanged: number;
+    prsOpened: number;
+    prsMerged: number;
+    issuesOpened: number;
+    issuesClosed: number;
+    ciFailures: number;
+    ciRecoveries: number;
+  };
+  whatChanged: BriefSectionItem[];
+  failures: BriefSectionItem[];
+  incidents: BriefSectionItem[];
+  risks: BriefSectionItem[];
+  pullRequests: BriefSectionItem[];
+  issues: BriefSectionItem[];
+  relationships: BriefRelationship[];
+  unknowns: string[];
+  investigationNextSteps: BriefSectionItem[];
+  evidence: BriefEvidenceItem[];
+}
+
+export interface BriefAiAnalysis {
+  summary: string;
+  assessment: 'low' | 'medium' | 'high' | 'unknown';
+  keyDevelopments: Array<{ claim: string; evidenceIds: string[] }>;
+  importantRisks: Array<{ claim: string; evidenceIds: string[] }>;
+  incidentAssessment: Array<{ claim: string; evidenceIds: string[] }>;
+  confirmedFacts: Array<{ claim: string; evidenceIds: string[] }>;
+  evidence: Array<{ id: string; kind: string; label: string; detail: string }>;
+  unknowns: string[];
+  investigationNextSteps: string[];
+}
+
+export interface BriefAnalysisState {
+  status: 'completed' | 'failed' | 'unavailable' | 'pending';
+  fingerprint: string;
+  model: string | null;
+  cached: boolean;
+  analysis: BriefAiAnalysis | null;
   error: { code: string; message: string } | null;
 }
 

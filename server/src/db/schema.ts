@@ -887,3 +887,42 @@ export const incidentAnalyses = pgTable(
 
 export type IncidentAnalysis = typeof incidentAnalyses.$inferSelect;
 export type NewIncidentAnalysis = typeof incidentAnalyses.$inferInsert;
+
+/**
+ * Cached AI engineering-brief analyses (Phase 13). The deterministic
+ * brief itself is computed on every read from existing intelligence and
+ * never persisted — only AI enhancements are cached, keyed by repository
+ * plus time window plus the deterministic evidence fingerprint. Any
+ * evidence change invalidates the cache entry.
+ */
+export const briefAnalyses = pgTable(
+  "brief_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    windowDays: integer("window_days").notNull(),
+    evidenceFingerprint: varchar("evidence_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    model: varchar("model", { length: 255 }),
+    summary: text("summary"),
+    assessment: varchar("assessment", { length: 20 }),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("brief_analyses_repo_window_fingerprint_idx").on(
+      table.repositoryId,
+      table.windowDays,
+      table.evidenceFingerprint,
+    ),
+    index("brief_analyses_repo_idx").on(table.repositoryId),
+  ],
+);
+
+export type BriefAnalysis = typeof briefAnalyses.$inferSelect;
+export type NewBriefAnalysis = typeof briefAnalyses.$inferInsert;

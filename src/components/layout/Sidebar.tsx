@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import clsx from "clsx";
 import {
   LayoutDashboard,
+  ScrollText,
   ShieldAlert,
   GitPullRequest,
   AlertCircle,
@@ -44,7 +45,10 @@ interface NavSection {
 
 const sections: NavSection[] = [
   {
-    items: [{ id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'active' }],
+    items: [
+      { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'active' },
+      { id: 'brief', label: 'Brief', icon: ScrollText, status: 'active' },
+    ],
   },
   {
     title: 'Engineering Intelligence',
