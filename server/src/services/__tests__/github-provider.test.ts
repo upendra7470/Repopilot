@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   fetchGithubCommitFiles,
+  fetchGithubPullRequest,
   fetchGithubRepoMetadata,
   fetchGithubTree,
   getGithubRepository,
   listGithubBranches,
   listGithubCommits,
+  listGithubPullCommits,
+  listGithubPullFiles,
+  listGithubPullRequests,
   listGithubRepositories,
   GithubApiError,
   MAX_DISCOVERY_REPOS,
@@ -165,6 +169,131 @@ describe("GitHub repository discovery provider", () => {
 
   it("exposes a sane discovery bound", () => {
     expect(MAX_DISCOVERY_REPOS).toBeLessThanOrEqual(1000);
+  });
+
+  it("lists pull requests across pages", async () => {
+    const pr = (n: number) => ({
+      id: 5000 + n,
+      number: n,
+      title: `PR ${n}`,
+      body: null,
+      state: "open",
+      draft: false,
+      user: { login: "alice", id: 1 },
+      head: { ref: `feature-${n}`, sha: "a".repeat(40) },
+      base: { ref: "main", sha: "b".repeat(40) },
+      html_url: `https://github.com/o/r/pull/${n}`,
+      created_at: "2026-09-01T10:00:00Z",
+      updated_at: "2026-09-02T10:00:00Z",
+      closed_at: null,
+      merged_at: null,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(Array.from({ length: 50 }, (_, i) => pr(i + 1))))
+      .mockResolvedValueOnce(jsonResponse([pr(51)]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const prs = await listGithubPullRequests("token", "o", "r");
+
+    expect(prs).toHaveLength(51);
+    expect(prs[0]).toMatchObject({ number: 1, authorLogin: "alice" });
+    expect(fetchMock.mock.calls[0][0]).toContain("state=all");
+  });
+
+  it("fetches full PR detail with diff stats", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse({
+          id: 5001,
+          number: 1,
+          title: "Big change",
+          body: "body",
+          state: "open",
+          draft: false,
+          merged: false,
+          user: { login: "bob", id: 2 },
+          head: { ref: "feat", sha: "c".repeat(40) },
+          base: { ref: "main", sha: "d".repeat(40) },
+          merge_commit_sha: null,
+          html_url: "https://github.com/o/r/pull/1",
+          additions: 183,
+          deletions: 72,
+          changed_files: 4,
+          created_at: "2026-09-01T10:00:00Z",
+          updated_at: "2026-09-02T10:00:00Z",
+          closed_at: null,
+          merged_at: null,
+        }),
+      ),
+    );
+
+    const detail = await fetchGithubPullRequest("token", "o", "r", 1);
+
+    expect(detail).toMatchObject({
+      additions: 183,
+      deletions: 72,
+      changedFiles: 4,
+      merged: false,
+    });
+  });
+
+  it("lists PR commits and files with metadata only", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            sha: "e".repeat(40),
+            commit: {
+              message: "c1",
+              author: { name: "A", email: "a@x", date: "2026-09-01T10:00:00Z" },
+              committer: { name: "A", email: "a@x", date: "2026-09-01T10:00:00Z" },
+            },
+            author: { login: "alice", id: 1, avatar_url: null },
+            committer: null,
+            html_url: "https://github.com/o/r/commit/eee",
+            parents: [],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            filename: "src/a.ts",
+            previous_filename: "src/old.ts",
+            sha: "f".repeat(40),
+            status: "renamed",
+            additions: 5,
+            deletions: 5,
+            changes: 10,
+            patch: "@@ should never be stored @@",
+          },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const commits = await listGithubPullCommits("token", "o", "r", 1);
+    expect(commits).toHaveLength(1);
+    expect(commits[0].sha).toBe("e".repeat(40));
+
+    const changedFiles = await listGithubPullFiles("token", "o", "r", 1);
+    expect(changedFiles).toHaveLength(1);
+    expect(changedFiles[0]).toMatchObject({
+      path: "src/a.ts",
+      previousPath: "src/old.ts",
+      status: "renamed",
+    });
+    expect(changedFiles[0]).not.toHaveProperty("patch");
+  });
+
+  it("maps PR 404s with status preserved", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({}, 404)));
+
+    const err = await fetchGithubPullRequest("token", "o", "r", 999).catch((e) => e);
+    expect(err).toBeInstanceOf(GithubApiError);
+    expect(err.status).toBe(404);
   });
 
   it("fetches branches with protection state", async () => {

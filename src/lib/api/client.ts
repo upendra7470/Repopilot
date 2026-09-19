@@ -139,6 +139,37 @@ class ApiClient {
     return this.request<RiskReport>(`/api/repositories/${id}/risks`);
   }
 
+  async listPullRequests(
+    id: string,
+    state?: string,
+  ): Promise<PrSummary[]> {
+    const suffix = state ? `?state=${encodeURIComponent(state)}` : '';
+    return this.request<PrSummary[]>(`/api/repositories/${id}/pulls${suffix}`);
+  }
+
+  async getPullRequest(id: string, prNumber: number): Promise<PrDetail> {
+    return this.request<PrDetail>(`/api/repositories/${id}/pulls/${prNumber}`);
+  }
+
+  async getPrIntelligence(id: string, prNumber: number): Promise<PrIntelligence> {
+    return this.request<PrIntelligence>(
+      `/api/repositories/${id}/pulls/${prNumber}/intelligence`,
+    );
+  }
+
+  async getPrAnalysis(id: string, prNumber: number): Promise<PrAnalysisState> {
+    return this.request<PrAnalysisState>(
+      `/api/repositories/${id}/pulls/${prNumber}/analysis`,
+    );
+  }
+
+  async analyzePr(id: string, prNumber: number): Promise<PrAnalysisState> {
+    return this.request<PrAnalysisState>(
+      `/api/repositories/${id}/pulls/${prNumber}/analyze`,
+      { method: 'POST' },
+    );
+  }
+
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -261,6 +292,7 @@ export interface SyncResult {
   commitCount: number;
   fileCount: number;
   contributorCount: number;
+  prCount: number;
   truncatedTree: boolean;
   durationMs: number;
 }
@@ -303,6 +335,98 @@ export interface RiskReport {
   analysisWindow: { type: string; value: number; start: string; end: string };
   summary: { total: number; critical: number; high: number; medium: number; low: number };
   findings: RiskFinding[];
+}
+
+export interface PrSummary {
+  id: string;
+  number: number;
+  title: string | null;
+  state: string;
+  draft: boolean;
+  merged: boolean;
+  authorLogin: string | null;
+  sourceBranch: string | null;
+  targetBranch: string | null;
+  additions: number | null;
+  deletions: number | null;
+  changedFilesCount: number | null;
+  htmlUrl: string | null;
+  githubCreatedAt: string | null;
+  githubUpdatedAt: string | null;
+  mergedAt: string | null;
+}
+
+export interface PrDetail {
+  pr: PrSummary;
+  files: Array<{
+    path: string;
+    previousPath: string | null;
+    sha: string | null;
+    status: string | null;
+    additions: number | null;
+    deletions: number | null;
+    changes: number | null;
+  }>;
+  commits: Array<{
+    sha: string;
+    message: string | null;
+    authorLogin: string | null;
+    committedAt: string | null;
+  }>;
+}
+
+export interface PrSignal {
+  type: string;
+  severity: 'info' | 'low' | 'medium' | 'high';
+  title: string;
+  detail: string;
+  evidence: Array<{ label: string; value: string }>;
+}
+
+export interface PrIntelligence {
+  signals: PrSignal[];
+  stats: {
+    additions: number | null;
+    deletions: number | null;
+    changedFiles: number | null;
+    commits: number;
+    contributors: string[];
+  };
+  areas: Array<{ area: string; changes: number }>;
+  files: Array<{
+    path: string;
+    status: string | null;
+    additions: number | null;
+    deletions: number | null;
+    windowChanges: number;
+    hot: boolean;
+  }>;
+  commits: Array<{
+    sha: string;
+    message: string | null;
+    authorLogin: string | null;
+    committedAt: string | null;
+  }>;
+  riskFindings: Array<{ id: string; type: string; severity: string; title: string }>;
+}
+
+export interface AiAnalysis {
+  summary: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical' | 'unknown';
+  keyChanges: string[];
+  riskFactors: Array<{ claim: string; evidenceIds: string[] }>;
+  evidence: Array<{ id: string; kind: string; label: string; detail: string }>;
+  reviewFocus: string[];
+  unknowns: string[];
+}
+
+export interface PrAnalysisState {
+  status: 'completed' | 'failed' | 'unavailable' | 'pending';
+  fingerprint: string;
+  model: string | null;
+  cached: boolean;
+  analysis: AiAnalysis | null;
+  error: { code: string; message: string } | null;
 }
 
 export interface ActivityEvent {

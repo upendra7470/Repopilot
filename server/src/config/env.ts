@@ -24,6 +24,12 @@ const envSchema = z.object({
   // Defaults to the local backend; override in deployed environments.
   GITHUB_REDIRECT_URI: z.string().url().optional(),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().max(720).default(168),
+  // AI provider (Phase 8, all optional — AI is strictly opt-in).
+  // Any OpenAI-compatible endpoint: OpenAI, Ollama (.../v1), LM Studio.
+  AI_PROVIDER: z.string().min(1).optional(),
+  AI_MODEL: z.string().min(1).optional(),
+  AI_BASE_URL: z.string().url().optional(),
+  AI_API_KEY: z.string().min(1).optional(),
 });
 
 function loadEnv() {

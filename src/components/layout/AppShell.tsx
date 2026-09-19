@@ -66,13 +66,15 @@ export function AppShell() {
         activeRoute={activeRoute}
         onNavigate={handleNavigate}
       />
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           onMenuToggle={handleToggleSidebar}
           onCommandOpen={handleCommandOpen}
         />
         <main className="flex-1 overflow-y-auto">
-          <Outlet />
+          <div key={location.pathname} className="animate-enter mx-auto max-w-[1280px] p-3 sm:p-4">
+            <Outlet />
+          </div>
         </main>
       </div>
       <CommandPalette open={commandOpen} onClose={handleCommandClose} />

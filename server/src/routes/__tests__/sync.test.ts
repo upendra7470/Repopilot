@@ -83,6 +83,22 @@ vi.mock("../../services/github-provider.js", async (importOriginal) => {
         { path: "README.md", sha: "c".repeat(40), status: "added", additions: 10, deletions: 0 },
       ];
     }),
+    listGithubPullRequests: vi.fn(async () => {
+      fail();
+      return [];
+    }),
+    fetchGithubPullRequest: vi.fn(async () => {
+      fail();
+      throw new original.GithubApiError(404, "missing");
+    }),
+    listGithubPullCommits: vi.fn(async () => {
+      fail();
+      return [];
+    }),
+    listGithubPullFiles: vi.fn(async () => {
+      fail();
+      return [];
+    }),
   };
 });
 

@@ -538,6 +538,178 @@ export async function fetchGithubCommitFiles(
     }));
 }
 
+/** Pull request identity + stats (Phase 8 ingestion, read-only). */
+export interface GithubPullRequest {
+  id: number;
+  number: number;
+  title: string | null;
+  body: string | null;
+  state: string;
+  draft: boolean;
+  merged: boolean;
+  authorLogin: string | null;
+  authorGithubId: number | null;
+  sourceBranch: string | null;
+  targetBranch: string | null;
+  headSha: string | null;
+  baseSha: string | null;
+  mergeCommitSha: string | null;
+  htmlUrl: string | null;
+  additions: number | null;
+  deletions: number | null;
+  changedFiles: number | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+  mergedAt: string | null;
+}
+
+interface GithubPullResponse {
+  id: number;
+  number: number;
+  title: string | null;
+  body: string | null;
+  state: string;
+  draft?: boolean;
+  merged?: boolean;
+  user: { login?: string; id?: number } | null;
+  head: { ref?: string; sha?: string } | null;
+  base: { ref?: string; sha?: string } | null;
+  merge_commit_sha?: string | null;
+  html_url?: string;
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  closed_at?: string | null;
+  merged_at?: string | null;
+}
+
+function toGithubPullRequest(data: GithubPullResponse): GithubPullRequest {
+  return {
+    id: data.id,
+    number: data.number,
+    title: data.title ?? null,
+    body: data.body ?? null,
+    state: data.state,
+    draft: data.draft ?? false,
+    merged: data.merged ?? false,
+    authorLogin: data.user?.login ?? null,
+    authorGithubId: typeof data.user?.id === "number" ? data.user.id : null,
+    sourceBranch: data.head?.ref ?? null,
+    targetBranch: data.base?.ref ?? null,
+    headSha: data.head?.sha ?? null,
+    baseSha: data.base?.sha ?? null,
+    mergeCommitSha: data.merge_commit_sha ?? null,
+    htmlUrl: data.html_url ?? null,
+    additions: typeof data.additions === "number" ? data.additions : null,
+    deletions: typeof data.deletions === "number" ? data.deletions : null,
+    changedFiles:
+      typeof data.changed_files === "number" ? data.changed_files : null,
+    createdAt: data.created_at ?? null,
+    updatedAt: data.updated_at ?? null,
+    closedAt: data.closed_at ?? null,
+    mergedAt: data.merged_at ?? null,
+  };
+}
+
+/**
+ * List pull requests (state open|closed|all), newest first, bounded pages.
+ * List items lack diff stats — fetch full detail per PR where needed.
+ */
+export async function listGithubPullRequests(
+  accessToken: string,
+  owner: string,
+  name: string,
+  options: { state?: string; maxPages?: number } = {},
+): Promise<GithubPullRequest[]> {
+  const state = options.state ?? "all";
+  const items = await githubGetAll<GithubPullResponse>(
+    (page, perPage) =>
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?state=${state}&sort=updated&direction=desc&per_page=${perPage}&page=${page}`,
+    accessToken,
+    { perPage: 50, maxPages: options.maxPages ?? 2 },
+  );
+  return items.map(toGithubPullRequest);
+}
+
+/** Full PR detail incl. diff stats (additions/deletions/changed files). */
+export async function fetchGithubPullRequest(
+  accessToken: string,
+  owner: string,
+  name: string,
+  prNumber: number,
+): Promise<GithubPullRequest> {
+  const data = await githubGet<GithubPullResponse>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${prNumber}`,
+    accessToken,
+  );
+  return toGithubPullRequest(data);
+}
+
+/** Commits belonging to a PR (same shape as the commits list endpoint). */
+export async function listGithubPullCommits(
+  accessToken: string,
+  owner: string,
+  name: string,
+  prNumber: number,
+  maxPages = 2,
+): Promise<GithubCommit[]> {
+  const items = await githubGetAll<GithubCommitResponse>(
+    (page, perPage) =>
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${prNumber}/commits?per_page=${perPage}&page=${page}`,
+    accessToken,
+    { perPage: 100, maxPages },
+  );
+  return items.map(toGithubCommit);
+}
+
+/** Changed-file metadata for a PR (no diffs, no patches). */
+export interface GithubPullFile {
+  path: string;
+  previousPath: string | null;
+  sha: string | null;
+  status: string | null;
+  additions: number | null;
+  deletions: number | null;
+  changes: number | null;
+}
+
+export async function listGithubPullFiles(
+  accessToken: string,
+  owner: string,
+  name: string,
+  prNumber: number,
+  maxPages = 1,
+): Promise<GithubPullFile[]> {
+  const items = await githubGetAll<{
+    filename?: string;
+    previous_filename?: string;
+    sha?: string;
+    status?: string;
+    additions?: number;
+    deletions?: number;
+    changes?: number;
+  }>(
+    (page, perPage) =>
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${prNumber}/files?per_page=${perPage}&page=${page}`,
+    accessToken,
+    { perPage: 100, maxPages },
+  );
+  return items
+    .filter((f) => typeof f.filename === "string")
+    .map((f) => ({
+      path: f.filename as string,
+      previousPath: f.previous_filename ?? null,
+      sha: f.sha ?? null,
+      status: f.status ?? null,
+      additions: typeof f.additions === "number" ? f.additions : null,
+      deletions: typeof f.deletions === "number" ? f.deletions : null,
+      changes: typeof f.changes === "number" ? f.changes : null,
+    }));
+}
+
 /**
  * Fetch the authenticated GitHub user's profile. The access token is only
  * ever sent in the Authorization header — never logged, never in URLs.

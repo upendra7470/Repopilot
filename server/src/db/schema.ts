@@ -339,6 +339,7 @@ export const syncRuns = pgTable(
     commitCount: integer("commit_count").default(0).notNull(),
     fileCount: integer("file_count").default(0).notNull(),
     contributorCount: integer("contributor_count").default(0).notNull(),
+    prCount: integer("pr_count").default(0).notNull(),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     finishedAt: timestamp("finished_at"),
   },
@@ -357,3 +358,149 @@ export type CommitFile = typeof commitFiles.$inferSelect;
 export type NewCommitFile = typeof commitFiles.$inferInsert;
 export type SyncRun = typeof syncRuns.$inferSelect;
 export type NewSyncRun = typeof syncRuns.$inferInsert;
+
+/**
+ * Pull requests (Phase 8 ingestion). Identity is the stable GitHub PR ID,
+ * with the human-facing number unique per repository. Rows are upserted —
+ * re-syncs refresh in place, never duplicate.
+ */
+export const pullRequests = pgTable(
+  "pull_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    githubId: varchar("github_id", { length: 255 }).notNull(),
+    number: integer("number").notNull(),
+    title: varchar("title", { length: 500 }),
+    body: text("body"),
+    state: varchar("state", { length: 20 }).default("open").notNull(),
+    draft: boolean("draft").default(false).notNull(),
+    merged: boolean("merged").default(false).notNull(),
+    authorLogin: varchar("author_login", { length: 255 }),
+    authorGithubId: varchar("author_github_id", { length: 255 }),
+    sourceBranch: varchar("source_branch", { length: 255 }),
+    targetBranch: varchar("target_branch", { length: 255 }),
+    headSha: varchar("head_sha", { length: 40 }),
+    baseSha: varchar("base_sha", { length: 40 }),
+    mergeCommitSha: varchar("merge_commit_sha", { length: 40 }),
+    htmlUrl: text("html_url"),
+    additions: integer("additions"),
+    deletions: integer("deletions"),
+    changedFilesCount: integer("changed_files_count"),
+    githubCreatedAt: timestamp("github_created_at"),
+    githubUpdatedAt: timestamp("github_updated_at"),
+    closedAt: timestamp("closed_at"),
+    mergedAt: timestamp("merged_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("prs_repo_github_idx").on(table.repositoryId, table.githubId),
+    uniqueIndex("prs_repo_number_idx").on(table.repositoryId, table.number),
+    index("prs_repo_idx").on(table.repositoryId),
+    index("prs_repo_state_idx").on(table.repositoryId, table.state),
+  ],
+);
+
+/**
+ * PR ↔ commit links. Reuses existing commit rows (matched by SHA) — no
+ * commit data is duplicated. Commits not present locally (fork-only or
+ * beyond sync bounds) are simply not linked.
+ */
+export const prCommits = pgTable(
+  "pr_commits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    pullRequestId: uuid("pull_request_id")
+      .references(() => pullRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    commitId: uuid("commit_id")
+      .references(() => commits.id, { onDelete: "cascade" })
+      .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("pr_commits_pr_commit_idx").on(
+      table.pullRequestId,
+      table.commitId,
+    ),
+    index("pr_commits_pr_idx").on(table.pullRequestId),
+  ],
+);
+
+/**
+ * Changed files per PR (metadata only: path, status, line counts).
+ * No diffs, no patches, no source code.
+ */
+export const prFiles = pgTable(
+  "pr_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    pullRequestId: uuid("pull_request_id")
+      .references(() => pullRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    path: text("path").notNull(),
+    previousPath: text("previous_path"),
+    sha: varchar("sha", { length: 100 }),
+    status: varchar("status", { length: 20 }),
+    additions: integer("additions"),
+    deletions: integer("deletions"),
+    changes: integer("changes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("pr_files_pr_path_idx").on(table.pullRequestId, table.path),
+    index("pr_files_pr_idx").on(table.pullRequestId),
+    index("pr_files_repo_idx").on(table.repositoryId),
+  ],
+);
+
+/**
+ * Cached AI analyses (Phase 8). One completed analysis per evidence
+ * fingerprint: identical evidence reuses the stored result instead of
+ * calling the model again. Failures are recorded for observability but
+ * never served as results.
+ */
+export const prAnalyses = pgTable(
+  "pr_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    pullRequestId: uuid("pull_request_id")
+      .references(() => pullRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    evidenceFingerprint: varchar("evidence_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    model: varchar("model", { length: 255 }),
+    summary: text("summary"),
+    riskLevel: varchar("risk_level", { length: 20 }),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("pr_analyses_pr_fingerprint_idx").on(
+      table.pullRequestId,
+      table.evidenceFingerprint,
+    ),
+    index("pr_analyses_repo_idx").on(table.repositoryId),
+  ],
+);
+
+export type PullRequest = typeof pullRequests.$inferSelect;
+export type NewPullRequest = typeof pullRequests.$inferInsert;
+export type PrCommit = typeof prCommits.$inferSelect;
+export type NewPrCommit = typeof prCommits.$inferInsert;
+export type PrFile = typeof prFiles.$inferSelect;
+export type NewPrFile = typeof prFiles.$inferInsert;
+export type PrAnalysis = typeof prAnalyses.$inferSelect;
+export type NewPrAnalysis = typeof prAnalyses.$inferInsert;

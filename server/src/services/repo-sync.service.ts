@@ -20,6 +20,8 @@ import {
 } from "./github-provider.js";
 import { userHasRepositoryAccess } from "./repository.service.js";
 import { getLogger } from "../utils/logger.js";
+import { chunk } from "./sync-utils.js";
+import { syncPullRequests } from "./pr-sync.service.js";
 
 /** Domain error with an explicit HTTP mapping for the route layer. */
 export type SyncHttpStatus = 400 | 403 | 404 | 409 | 502 | 503;
@@ -43,6 +45,7 @@ export interface SyncSummary {
   commitCount: number;
   fileCount: number;
   contributorCount: number;
+  prCount: number;
   truncatedTree: boolean;
   durationMs: number;
 }
@@ -60,14 +63,6 @@ export const STALE_RUN_MS = 30 * 60 * 1000;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
 
 async function recoverStaleRuns(repositoryId: string): Promise<void> {
   const db = getDb();
@@ -514,6 +509,15 @@ export async function startRepositorySync(
     // 6. Contributors derived above; count distinct touched + total.
     await setRunStage(runId, "contributors");
 
+    // 7. Pull requests (bounded, read-only; own stage, own errors).
+    await setRunStage(runId, "pull_requests");
+    const { prCount } = await syncPullRequests(
+      repositoryId,
+      credential,
+      repo.owner,
+      repo.name,
+    );
+
     const finishedAt = new Date();
     await db
       .update(syncRuns)
@@ -524,6 +528,7 @@ export async function startRepositorySync(
         commitCount,
         fileCount,
         contributorCount: contributorIds.size,
+        prCount,
         finishedAt,
       })
       .where(eq(syncRuns.id, runId));
@@ -543,6 +548,7 @@ export async function startRepositorySync(
         branches: githubBranches.length,
         commits: commitCount,
         files: fileCount,
+        prs: prCount,
       },
       "Repository sync succeeded",
     );
@@ -554,6 +560,7 @@ export async function startRepositorySync(
       commitCount,
       fileCount,
       contributorCount: contributorIds.size,
+      prCount,
       truncatedTree,
       durationMs: Date.now() - started,
     };

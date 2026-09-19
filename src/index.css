@@ -1,40 +1,98 @@
 @import "tailwindcss";
 
+/*
+ * RepoPilot developer-tool theme (Phase 8).
+ *
+ * Neutral graphite foundation, one restrained engineering-blue accent,
+ * meaning-only severity colors. No purple brand, no neon, no glass.
+ * Dark is the default; light theme via [data-theme="light"] on <html>.
+ */
 @theme {
-  --color-bg-primary: #0a0a0f;
-  --color-bg-secondary: #12121a;
-  --color-bg-tertiary: #1a1a24;
-  --color-bg-elevated: #1e1e28;
-  --color-bg-hover: #252530;
+  /* Dark: graphite / slate */
+  --color-bg-primary: #0f141a;
+  --color-bg-secondary: #151b23;
+  --color-bg-tertiary: #1b232e;
+  --color-bg-elevated: #1f2733;
+  --color-bg-hover: #232d3a;
+  --color-bg-inset: #0b0f14;
 
-  --color-border-primary: #1e1e2a;
-  --color-border-secondary: #2a2a3a;
-  --color-border-active: #3a3a5a;
+  --color-border-primary: #232c38;
+  --color-border-secondary: #2e3947;
+  --color-border-active: #3d4b5e;
 
-  --color-text-primary: #e8e8ed;
-  --color-text-secondary: #8888a0;
-  --color-text-muted: #55556a;
-  --color-text-accent: #6366f1;
+  --color-text-primary: #e6ebf1;
+  --color-text-secondary: #9aa7b5;
+  --color-text-muted: #66727f;
+  --color-text-accent: #4493f8;
 
-  --color-accent: #6366f1;
-  --color-accent-hover: #818cf8;
-  --color-accent-muted: rgba(99, 102, 241, 0.15);
+  --color-accent: #4493f8;
+  --color-accent-hover: #79b8ff;
+  --color-accent-emphasis: #1f6feb;
+  --color-accent-muted: rgba(68, 147, 248, 0.12);
 
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
-  --color-info: #3b82f6;
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-danger: #f85149;
+  --color-info: #4493f8;
 
-  --color-risk-critical: #dc2626;
-  --color-risk-high: #f97316;
-  --color-risk-medium: #eab308;
-  --color-risk-low: #22c55e;
-  --color-risk-info: #3b82f6;
+  --color-risk-critical: #f85149;
+  --color-risk-high: #db6d28;
+  --color-risk-medium: #d29922;
+  --color-risk-low: #3fb950;
+  --color-risk-info: #4493f8;
 
-  --font-sans: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", monospace;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Consolas, monospace;
 
   --sidebar-width: 240px;
+
+  --radius-panel: 6px;
+  --radius-control: 4px;
+}
+
+/* Light theme: off-white foundation, same accent family. */
+[data-theme="light"] {
+  --color-bg-primary: #f6f8fa;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #eef1f5;
+  --color-bg-elevated: #ffffff;
+  --color-bg-hover: #e8edf2;
+  --color-bg-inset: #eef1f5;
+
+  --color-border-primary: #d9dee5;
+  --color-border-secondary: #c4ccd6;
+  --color-border-active: #9aa7b5;
+
+  --color-text-primary: #1f2328;
+  --color-text-secondary: #59636e;
+  --color-text-muted: #818b98;
+  --color-text-accent: #0969da;
+
+  --color-accent: #0969da;
+  --color-accent-hover: #0550ae;
+  --color-accent-emphasis: #0969da;
+  --color-accent-muted: rgba(9, 105, 218, 0.08);
+
+  --color-success: #1a7f37;
+  --color-warning: #9a6700;
+  --color-danger: #d1242f;
+  --color-info: #0969da;
+
+  --color-risk-critical: #d1242f;
+  --color-risk-high: #bc4c00;
+  --color-risk-medium: #9a6700;
+  --color-risk-low: #1a7f37;
+  --color-risk-info: #0969da;
+
+  color-scheme: light;
+}
+
+:root {
+  color-scheme: dark;
+  --transition-fast: 120ms ease-out;
+  --transition-base: 200ms ease-out;
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 * {
@@ -43,8 +101,8 @@
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -53,7 +111,7 @@
 
 ::-webkit-scrollbar-thumb {
   background-color: var(--color-border-secondary);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -62,7 +120,8 @@
 
 *:focus-visible {
   outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline-offset: 1px;
+  border-radius: 2px;
 }
 
 html {
@@ -74,6 +133,107 @@ body {
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--color-accent-muted);
+}
+
+/* ---- Professional motion: short, intentional, skippable ---- */
+
+@keyframes rp-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rp-shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+@keyframes rp-pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Page-level entrance: apply once per view. */
+.animate-enter {
+  animation: rp-fade-in var(--transition-base);
+}
+
+/* Staggered list entrance: set style={{ "--i": index }} on items. */
+.animate-list-item {
+  animation: rp-rise var(--transition-base);
+  animation-delay: calc(var(--i, 0) * 30ms);
+  animation-fill-mode: both;
+}
+
+/* Live/sync pulse (sync badge, running dot). */
+.animate-live {
+  animation: rp-pulse-soft 1.6s ease-in-out infinite;
+}
+
+/* Skeleton shimmer for loading states. */
+.skeleton-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-bg-tertiary) 25%,
+    var(--color-bg-hover) 50%,
+    var(--color-bg-tertiary) 75%
+  );
+  background-size: 800px 100%;
+  animation: rp-shimmer 1.4s linear infinite;
+}
+
+/* Dense technical identifier. */
+.tech-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-enter,
+  .animate-list-item,
+  .animate-live,
+  .skeleton-shimmer {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
 }

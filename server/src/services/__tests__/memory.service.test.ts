@@ -55,6 +55,12 @@ vi.mock("../github-provider.js", async (importOriginal) => {
       entries: mockState.treeEntries,
     })),
     fetchGithubCommitFiles: vi.fn(async () => mockState.commitFiles),
+    listGithubPullRequests: vi.fn(async () => []),
+    fetchGithubPullRequest: vi.fn(async () => {
+      throw new original.GithubApiError(404, "missing");
+    }),
+    listGithubPullCommits: vi.fn(async () => []),
+    listGithubPullFiles: vi.fn(async () => []),
   };
 });
 

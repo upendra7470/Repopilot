@@ -1,5 +1,6 @@
 import clsx from "clsx";
-import { Menu, Search, Bell, LogOut } from "lucide-react";
+import { Menu, Search, Bell, LogOut, Sun, Moon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 
@@ -29,6 +30,22 @@ function useBreadcrumb(): string {
   return detail ? `${label} / Details` : label;
 }
 
+function useTheme(): ['dark' | 'light', () => void] {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return (window.localStorage.getItem('repopilot-theme') as 'dark' | 'light') || 'dark';
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem('repopilot-theme', theme);
+    } catch {
+      /* storage unavailable — theme still applies for the session */
+    }
+  }, [theme]);
+  return [theme, () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))];
+}
+
 interface TopBarProps {
   onMenuToggle?: () => void;
   onCommandOpen?: () => void;
@@ -41,20 +58,21 @@ function UserInitials({ login }: { login: string }) {
 export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
   const { user, logout } = useAuth();
   const breadcrumb = useBreadcrumb();
+  const [theme, toggleTheme] = useTheme();
 
   return (
-    <header className="flex items-center justify-between h-14 px-4 border-b border-border-primary bg-bg-secondary/80 backdrop-blur-md flex-shrink-0">
+    <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border-primary bg-bg-secondary px-3">
       {/* Left: mobile menu + breadcrumb */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2">
         <button
           onClick={onMenuToggle}
-          className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors md:hidden"
+          className="rounded border border-transparent p-1.5 text-text-muted transition-colors hover:border-border-primary hover:text-text-secondary md:hidden"
           aria-label="Toggle menu"
         >
-          <Menu size={18} />
+          <Menu size={16} />
         </button>
-        <nav className="flex items-center gap-1.5 text-sm" aria-label="Breadcrumb">
-          <span className="text-text-primary font-medium">{breadcrumb}</span>
+        <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" aria-label="Breadcrumb">
+          <span className="truncate font-medium text-text-primary">{breadcrumb}</span>
         </nav>
       </div>
 
@@ -62,54 +80,61 @@ export function TopBar({ onMenuToggle, onCommandOpen }: TopBarProps) {
       <button
         onClick={onCommandOpen}
         className={clsx(
-          "hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg",
-          "bg-bg-tertiary border border-border-primary",
-          "text-text-muted text-sm",
-          "hover:border-border-secondary hover:text-text-secondary",
-          "transition-colors"
+          "hidden items-center gap-2 rounded border border-border-primary bg-bg-tertiary px-2.5 py-1",
+          "text-xs text-text-muted",
+          "transition-colors hover:border-border-secondary hover:text-text-secondary",
+          "sm:flex"
         )}
       >
-        <Search size={14} />
-        <span>Search or press</span>
-        <kbd className="px-1.5 py-0.5 text-[11px] font-mono bg-bg-hover rounded text-text-muted border border-border-secondary">
+        <Search size={13} />
+        <span className="font-mono">Search</span>
+        <kbd className="rounded border border-border-secondary bg-bg-hover px-1 py-px font-mono text-[10px] text-text-muted">
           ⌘K
         </kbd>
       </button>
 
-      {/* Right: notifications + identity + sign out */}
-      <div className="flex items-center gap-2">
+      {/* Right: theme + notifications + identity + sign out */}
+      <div className="flex items-center gap-1">
         <button
-          className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors relative"
+          onClick={toggleTheme}
+          className="rounded border border-transparent p-1.5 text-text-muted transition-colors hover:border-border-primary hover:text-text-secondary"
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+        >
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
+        <button
+          className="relative rounded border border-transparent p-1.5 text-text-muted transition-colors hover:border-border-primary hover:text-text-secondary"
           aria-label="Notifications"
         >
-          <Bell size={18} />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-danger rounded-full" />
+          <Bell size={15} />
+          <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-danger" />
         </button>
         {user && (
-          <div className="flex items-center gap-2 ml-1">
+          <div className="ml-1 flex items-center gap-2 border-l border-border-primary pl-2">
             {user.avatarUrl ? (
               <img
                 src={user.avatarUrl}
                 alt={user.login}
-                className="w-7 h-7 rounded-full"
+                className="h-6 w-6 rounded-full"
               />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center">
-                <span className="text-xs font-medium text-accent">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full border border-accent/30 bg-accent-muted">
+                <span className="font-mono text-[10px] font-semibold text-accent">
                   <UserInitials login={user.login} />
                 </span>
               </div>
             )}
-            <span className="hidden md:inline text-sm text-text-secondary max-w-32 truncate">
+            <span className="hidden max-w-32 truncate font-mono text-xs text-text-secondary md:inline">
               {user.login}
             </span>
             <button
               onClick={() => void logout()}
-              className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
+              className="rounded border border-transparent p-1.5 text-text-muted transition-colors hover:border-border-primary hover:text-text-secondary"
               aria-label="Sign out"
               title="Sign out"
             >
-              <LogOut size={16} />
+              <LogOut size={14} />
             </button>
           </div>
         )}

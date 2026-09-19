@@ -6,10 +6,10 @@ interface RiskBadgeProps {
 }
 
 const levelStyles: Record<RiskBadgeProps['level'], string> = {
-  low: 'bg-risk-low/15 text-risk-low',
-  medium: 'bg-risk-medium/15 text-risk-medium',
-  high: 'bg-risk-high/15 text-risk-high',
-  critical: 'bg-risk-critical/15 text-risk-critical',
+  low: 'bg-risk-low/10 text-risk-low border border-risk-low/25',
+  medium: 'bg-risk-medium/10 text-risk-medium border border-risk-medium/25',
+  high: 'bg-risk-high/10 text-risk-high border border-risk-high/25',
+  critical: 'bg-risk-critical/10 text-risk-critical border border-risk-critical/25',
 }
 
 const levelLabels: Record<RiskBadgeProps['level'], string> = {
@@ -23,9 +23,9 @@ export function RiskBadge({ level, size = 'sm' }: RiskBadgeProps) {
   return (
     <span
       className={clsx(
-        'inline-flex items-center rounded-full font-semibold uppercase tracking-wide',
+        'inline-flex items-center rounded font-semibold uppercase tracking-wide whitespace-nowrap',
         levelStyles[level],
-        size === 'sm' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-xs'
+        size === 'sm' ? 'px-1.5 py-px text-[10px] leading-4' : 'px-2 py-0.5 text-xs'
       )}
     >
       {levelLabels[level]}

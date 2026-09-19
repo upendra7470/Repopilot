@@ -79,6 +79,22 @@ vi.mock("../github-provider.js", async (importOriginal) => {
       if (mockState.authError) throw mockState.authError;
       return mockState.commitFiles;
     }),
+    listGithubPullRequests: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      return [];
+    }),
+    fetchGithubPullRequest: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      throw new original.GithubApiError(404, "missing");
+    }),
+    listGithubPullCommits: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      return [];
+    }),
+    listGithubPullFiles: vi.fn(async () => {
+      if (mockState.authError) throw mockState.authError;
+      return [];
+    }),
   };
 });
 

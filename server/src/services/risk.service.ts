@@ -144,6 +144,11 @@ const CORRECTIVE_PATTERN =
   /\b(fix|fixes|fixed|fixing|bug|bugfix|hotfix|revert|reverts|reverted|reverting|regression|patch|repair)\b/i;
 const REVERT_PATTERN = /\brevert\w*\b/i;
 
+/** Deterministic check shared with PR intelligence: does the first message line read as corrective work? */
+export function isCorrectiveMessage(message: string | null): boolean {
+  return CORRECTIVE_PATTERN.test(firstLine(message));
+}
+
 function formatShare(share: number): string {
   return `${Math.round(share * 100)}%`;
 }

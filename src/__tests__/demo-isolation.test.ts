@@ -4,6 +4,15 @@ import topBarSource from '../components/layout/TopBar?raw';
 import appShellSource from '../components/layout/AppShell?raw';
 import repositoryPageSource from '../pages/RepositoryPage?raw';
 import repositoryDetailSource from '../pages/RepositoryDetailPage?raw';
+import riskPageSource from '../pages/RiskPage?raw';
+import pullRequestPageSource from '../pages/PullRequestPage?raw';
+import issuesPageSource from '../pages/IssuesPage?raw';
+import cicdPageSource from '../pages/CICDPage?raw';
+import incidentsPageSource from '../pages/IncidentsPage?raw';
+import componentsPageSource from '../pages/ComponentsPage?raw';
+import knowledgeGraphPageSource from '../pages/KnowledgeGraphPage?raw';
+import askPageSource from '../pages/AskRepoPilotPage?raw';
+import settingsPageSource from '../pages/SettingsPage?raw';
 
 /**
  * Static regression guard: production repository flows must never reference
@@ -17,6 +26,17 @@ const productionRepoFlowSources: Array<[string, string]> = [
   ['AppShell', appShellSource],
   ['RepositoryPage', repositoryPageSource],
   ['RepositoryDetailPage', repositoryDetailSource],
+  ['RiskPage', riskPageSource],
+  ['PullRequestPage', pullRequestPageSource],
+  // Phase 8: unfinished intelligence sections must be honest placeholders,
+  // never demo data dressed as findings.
+  ['IssuesPage', issuesPageSource],
+  ['CICDPage', cicdPageSource],
+  ['IncidentsPage', incidentsPageSource],
+  ['ComponentsPage', componentsPageSource],
+  ['KnowledgeGraphPage', knowledgeGraphPageSource],
+  ['AskRepoPilotPage', askPageSource],
+  ['SettingsPage', settingsPageSource],
 ];
 
 describe('demo isolation in repository flows', () => {

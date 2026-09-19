@@ -368,6 +368,6 @@ describe('RepositoryPage connection flow', () => {
       </MemoryRouter>,
     );
 
-    expect(container.querySelector('.animate-pulse')).not.toBeNull();
+    expect(container.querySelector('.skeleton-shimmer')).not.toBeNull();
   });
 });
