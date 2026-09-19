@@ -49,7 +49,7 @@ function githubHeaders(accessToken: string): Record<string, string> {
 export async function fetchGithubPrimaryEmail(
   accessToken: string,
 ): Promise<string | null> {
-  const res = await fetch("https://api.github.com/user/emails", {
+  const res = await fetchWithTimeout("https://api.github.com/user/emails", {
     headers: githubHeaders(accessToken),
   });
   if (!res.ok) {
@@ -102,6 +102,24 @@ function isRetryableStatus(status: number): boolean {
 }
 
 /**
+ * Per-request timeout for GitHub API calls. Without it a hung upstream
+ * connection hangs the sync indefinitely (recovered only by the 30-minute
+ * stale-run window). Timeouts classify as status 0: retried with backoff
+ * by withRetry, then reported honestly as upstream-unavailable.
+ */
+export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GITHUB_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
  * Retry transient GitHub failures (network errors, rate limits, 5xx) with
  * backoff. Never retries auth/permission/client errors (401/403/404/422).
  * Honors Retry-After on 429, capped at 60s. Max 3 attempts total.
@@ -131,7 +149,7 @@ async function githubGet<T>(path: string, accessToken: string): Promise<T> {
   return withRetry(async () => {
     let res: Response;
     try {
-      res = await fetch(`https://api.github.com${path}`, {
+      res = await fetchWithTimeout(`https://api.github.com${path}`, {
         headers: githubHeaders(accessToken),
       });
     } catch (err) {
@@ -1071,7 +1089,7 @@ export async function listGithubRunJobs(
  */export async function fetchGithubProfile(
   accessToken: string,
 ): Promise<GithubProfile> {
-  const res = await fetch("https://api.github.com/user", {
+  const res = await fetchWithTimeout("https://api.github.com/user", {
     headers: githubHeaders(accessToken),
   });
   if (!res.ok) {

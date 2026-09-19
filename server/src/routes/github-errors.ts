@@ -15,6 +15,15 @@ export function sendGithubError(
       error: { code: "INVALID_REPOSITORY", message: err.message },
     });
   }
+  if (err.status === 422) {
+    return reply.status(400).send({
+      error: {
+        code: "GITHUB_INVALID_REQUEST",
+        message:
+          "GitHub rejected the request as invalid — the repository reference may be stale. Retrying will not help; reconnecting the repository might.",
+      },
+    });
+  }
   if (err.status === 401) {
     return reply.status(502).send({
       error: {

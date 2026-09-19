@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { desc, eq } from "drizzle-orm";
 import { buildTestApp, loginTestUser } from "./helpers.js";
 import { GithubApiError } from "../../services/github-provider.js";
 import {
   createRepository,
   linkUserRepository,
 } from "../../services/repository.service.js";
+import { getDb } from "../../db/index.js";
+import { syncRuns } from "../../db/schema.js";
 
 const { mockState } = vi.hoisted(() => ({
   mockState: {
@@ -238,6 +241,31 @@ describe("Repository sync API", () => {
     expect(response.statusCode).toBe(502);
     expect(JSON.parse(response.payload).error.code).toBe("GITHUB_AUTH_FAILED");
     expect(response.payload).not.toContain("accessToken");
+    mockState.authError = null;
+  });
+
+  it("maps invalid GitHub requests to 400 without claiming a retry will help", async () => {
+    const login = await loginTestUser();
+    const repo = await connectedRepo(login.user.id);
+    mockState.authError = new GithubApiError(422, "validation failed");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repo.id}/sync`,
+      headers: { cookie: login.cookie },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe("GITHUB_INVALID_REQUEST");
+    // The failed run is recorded honestly as failed, never succeeded.
+    const [latest] = await getDb()
+      .select()
+      .from(syncRuns)
+      .where(eq(syncRuns.repositoryId, repo.id))
+      .orderBy(desc(syncRuns.startedAt))
+      .limit(1);
+    expect(latest.status).toBe("failed");
+    expect(latest.errorCode).toBe("GITHUB_422");
     mockState.authError = null;
   });
 

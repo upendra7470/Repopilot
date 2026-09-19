@@ -622,7 +622,13 @@ export async function startRepositorySync(
       );
     }
     logger.error(
-      { runId, repositoryId, code },
+      {
+        runId,
+        repositoryId,
+        code,
+        githubStatus: err instanceof GithubApiError ? err.status : undefined,
+        rateLimited: err instanceof GithubApiError ? err.rateLimited : undefined,
+      },
       "Repository sync failed",
     );
     throw err;
