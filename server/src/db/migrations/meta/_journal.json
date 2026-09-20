@@ -78,6 +78,13 @@
       "when": 1789839486669,
       "tag": "0010_harsh_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789904385235,
+      "tag": "0011_classy_silver_centurion",
+      "breakpoints": true
     }
   ]
 }

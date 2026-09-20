@@ -15,6 +15,41 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 
+const NODE_TYPE_LABELS: Record<string, string> = {
+  repository: 'Repository',
+  commit: 'Commit',
+  file: 'File',
+  contributor: 'Contributor',
+  pull_request: 'Pull Request',
+  issue: 'Issue',
+  ci_workflow: 'CI Workflow',
+  ci_run: 'CI Run',
+  risk: 'Risk',
+  incident: 'Incident',
+};
+
+function NodeBadge({ type, label }: { type: string; label: string }) {
+  const icons: Record<string, React.ReactNode> = {
+    repository: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-accent"><path d="M3 3h4.5v10H3V3zm5.5 0H13v4.5H8.5V3zM8.5 9H13v4.5H8.5V9z" fill="currentColor"/></svg>,
+    commit: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-info"><path d="M10.5 3.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0zM14 14H2v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2z" fill="currentColor"/></svg>,
+    file: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-warning"><path d="M14 2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM4 4h8v8H4V4z" fill="currentColor"/></svg>,
+    contributor: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-success"><path d="M8 5a3 3 0 1 1 0-6 3 3 0 0 1 0 6zM14 14a6 6 0 0 1-12 0H2v-2a6 6 0 0 1 12 0v2h2z" fill="currentColor"/></svg>,
+    pull_request: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-accent"><path d="M6 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H6zM1 6h5v2H1v-2zM1 10h5v2H1v-2z" fill="currentColor"/></svg>,
+    issue: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-warning"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 2a5 5 0 1 1 0 10A5 5 0 0 1 8 3zM8 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zM8 10a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" fill="currentColor"/></svg>,
+    ci_workflow: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-info"><path d="M2 3h12v10H2V3zm0 1h12v8H2V4z" fill="currentColor"/></svg>,
+    ci_run: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-warning"><path d="M2 3h12v10H2V3zm0 1h12v8H2V4z" fill="currentColor"/></svg>,
+    risk: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-danger"><path d="M8 2L14 14H2L8 2zM8 5a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zM8 12a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" fill="currentColor"/></svg>,
+    incident: <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-danger"><path d="M8 2L14 14H2L8 2zM8 5a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zM8 12a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" fill="currentColor"/></svg>,
+  };
+  const Icon = icons[type] ?? <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-text-muted"><rect x="2" y="2" width="12" height="12" rx="2" fill="currentColor"/></svg>;
+  return (
+    <span className="inline-flex items-center gap-1 rounded border border-border-secondary bg-bg-tertiary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-secondary">
+      {Icon}
+      {label}
+    </span>
+  );
+}
+
 const SUGGESTED_QUESTIONS = [
   'What changed recently?',
   'Why is CI unstable?',
@@ -117,6 +152,12 @@ export function AskRepoPilotPage() {
   const [selectedId, setSelectedId] = useState<string | null>(
     searchParams.get('repositoryId'),
   );
+  
+  // Read entity context from URL for contextual investigations
+  const entityType = searchParams.get('entityType');
+  const entityId = searchParams.get('entityId');
+  const hasEntityContext = entityType !== null && entityId !== null;
+  
   const [question, setQuestion] = useState('');
   const [response, setResponse] = useState<AskResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -193,10 +234,12 @@ export function AskRepoPilotPage() {
     const requestId = (requestRef.current += 1);
 
     try {
-      const res = await api.askQuestion(effectiveId, trimmed, undefined, history);
+      const res = await api.askQuestion(effectiveId, trimmed, hasEntityContext ? { entityType, entityId } : undefined, history);
       if (requestRef.current === requestId) {
         setResponse(res);
-        setHistory((prev) => [...prev.slice(-2), { question: trimmed, evidenceIds: res.evidence.map((e) => e.id) }]);
+        // Limit history evidenceIds to 30 items per turn (backend validation)
+        const limitedEvidenceIds = res.evidence.map((e) => e.id).slice(0, 30);
+        setHistory((prev) => [...prev.slice(-2), { question: trimmed, evidenceIds: limitedEvidenceIds }]);
       }
     } catch (err) {
       if (requestRef.current === requestId) {
@@ -208,7 +251,7 @@ export function AskRepoPilotPage() {
         setWorking(false);
       }
     }
-  }, [effectiveId, question, history, working]);
+  }, [effectiveId, question, history, working, hasEntityContext, entityType, entityId]);
 
   const handleSuggestedClick = useCallback((q: string) => {
     setQuestion(q);
@@ -299,6 +342,17 @@ export function AskRepoPilotPage() {
             </p>
           </div>
         </div>
+
+        {hasEntityContext && (
+          <Panel title="Investigation Context" subtitle="This investigation is focused on a specific entity from the Knowledge Graph.">
+            <div className="flex items-center gap-2 flex-wrap">
+              <NodeBadge type={entityType} label={NODE_TYPE_LABELS[entityType] ?? entityType} />
+              <span className="font-mono text-sm text-text-primary">{entityId}</span>
+              <span className="text-text-muted">—</span>
+              <span className="text-text-secondary">Questions will be answered in the context of this entity.</span>
+            </div>
+          </Panel>
+        )}
 
         <Panel title="Question" subtitle="Enter an engineering question about this repository.">
           <form onSubmit={handleSubmit} className="space-y-2">

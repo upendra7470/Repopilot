@@ -2,10 +2,10 @@ import { getEnv } from "../config/env.js";
 import { getLogger } from "../utils/logger.js";
 
 /**
- * Minimal OpenAI-compatible provider abstraction (Phase 8).
+ * AI Provider abstraction (Phase 17).
  *
- * Works with OpenAI, Ollama (`AI_BASE_URL=http://localhost:11434/v1`),
- * LM Studio, or any OpenAI-compatible endpoint — fetch only, no SDK.
+ * Supports both system-configured and user-configured AI providers.
+ * Works with OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint.
  * AI is strictly optional: when unconfigured, callers serve deterministic
  * intelligence with an explicit AI_UNAVAILABLE state. Never fabricated.
  */
@@ -15,29 +15,6 @@ export interface AiConfig {
   model: string;
   baseUrl: string;
   apiKey: string | null;
-}
-
-/** Resolved config, or null when AI is not configured. */
-export function getAiConfig(): AiConfig | null {
-  const env = getEnv();
-  if (env.AI_API_KEY) {
-    return {
-      provider: env.AI_PROVIDER ?? "openai",
-      model: env.AI_MODEL ?? "gpt-4o-mini",
-      baseUrl: env.AI_BASE_URL ?? "https://api.openai.com/v1",
-      apiKey: env.AI_API_KEY,
-    };
-  }
-  // Keyless local endpoints (Ollama / LM Studio) are valid without a key.
-  if (env.AI_BASE_URL) {
-    return {
-      provider: env.AI_PROVIDER ?? "local",
-      model: env.AI_MODEL ?? "default",
-      baseUrl: env.AI_BASE_URL,
-      apiKey: null,
-    };
-  }
-  return null;
 }
 
 export type AiErrorCode =
@@ -65,15 +42,44 @@ export interface ChatOptions {
   timeoutMs?: number;
 }
 
+/** Resolved config from system environment, or null when AI is not configured. */
+export function getAiConfig(): AiConfig | null {
+  const env = getEnv();
+  if (env.AI_API_KEY) {
+    return {
+      provider: env.AI_PROVIDER ?? "openai",
+      model: env.AI_MODEL ?? "gpt-4o-mini",
+      baseUrl: env.AI_BASE_URL ?? "https://api.openai.com/v1",
+      apiKey: env.AI_API_KEY,
+    };
+  }
+  // Keyless local endpoints (Ollama / LM Studio) are valid without a key.
+  if (env.AI_BASE_URL) {
+    return {
+      provider: env.AI_PROVIDER ?? "local",
+      model: env.AI_MODEL ?? "default",
+      baseUrl: env.AI_BASE_URL,
+      apiKey: null,
+    };
+  }
+  return null;
+}
+
 /**
  * Single chat completion, returned as raw text. Timeouts, HTTP failures,
  * and transport errors map to classified AiErrors. The API key is sent in
  * the Authorization header only — never logged.
+ *
+ * If config is provided, it takes precedence over system configuration.
+ * This allows user-configured AI providers to take precedence.
  */
-export async function completeChat(options: ChatOptions): Promise<string> {
+export async function completeChat(
+  options: ChatOptions,
+  config?: AiConfig | null,
+): Promise<string> {
   const logger = getLogger();
-  const config = getAiConfig();
-  if (!config) {
+  const effectiveConfig = config ?? getAiConfig();
+  if (!effectiveConfig) {
     throw new AiError("AI_UNAVAILABLE", "AI provider is not configured");
   }
 
@@ -85,15 +91,15 @@ export async function completeChat(options: ChatOptions): Promise<string> {
   try {
     let res: Response;
     try {
-      res = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      res = await fetch(`${effectiveConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          ...(effectiveConfig.apiKey ? { Authorization: `Bearer ${effectiveConfig.apiKey}` } : {}),
         },
         body: JSON.stringify({
-          model: config.model,
+          model: effectiveConfig.model,
           temperature: 0,
           max_tokens: options.maxTokens ?? 2000,
           messages: [
@@ -136,7 +142,7 @@ export async function completeChat(options: ChatOptions): Promise<string> {
   } finally {
     clearTimeout(timeout);
     logger.debug(
-      { provider: config.provider, model: config.model },
+      { provider: effectiveConfig.provider, model: effectiveConfig.model },
       "AI completion finished",
     );
   }

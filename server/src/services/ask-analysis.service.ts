@@ -21,6 +21,7 @@ import {
 import { getLogger } from "../utils/logger.js";
 
 const MAX_STRING_CHARS = 2000;
+const MAX_HISTORY_EVIDENCE_IDS = 30;
 
 const claimSchema = z.object({
   text: z.string().max(500),
@@ -215,6 +216,7 @@ function buildConversationContext(history: AskConversationTurn[], evidence: AskE
   return recent
     .map((turn) => {
       const evidenceRefs = turn.evidenceIds
+        .slice(0, MAX_HISTORY_EVIDENCE_IDS)
         .map((id) => evidenceById.get(id))
         .filter(Boolean)
         .map((e) => `${e!.id}: ${e!.label}`)
@@ -242,9 +244,10 @@ function buildEntitiesContext(entities: AskEntityRef[]): string {
 export async function analyzeWithAi(
   result: AskResult,
   history: AskConversationTurn[] = [],
+  aiConfig?: { provider: string; model: string; baseUrl: string; apiKey: string | null } | null,
 ): Promise<AskAiResponse | { aiUnavailable: true }> {
   const logger = getLogger();
-  const config = getAiConfig();
+  const config = aiConfig ?? getAiConfig();
   if (!config) {
     logger.debug("AI not configured, skipping AI analysis");
     return { aiUnavailable: true };
@@ -267,12 +270,15 @@ ${evidenceContext}
 Provide a structured JSON response per the system prompt.`;
 
   try {
-    const raw = await completeChat({
-      system: SYSTEM_PROMPT,
-      user: userPrompt,
-      maxTokens: 3000,
-      timeoutMs: 60_000,
-    });
+    const raw = await completeChat(
+      {
+        system: SYSTEM_PROMPT,
+        user: userPrompt,
+        maxTokens: 3000,
+        timeoutMs: 60_000,
+      },
+      config,
+    );
     const parsed = extractJsonObject(raw) as AskAiResponse;
 
     const validIds = new Set(result.evidence.map((e) => e.id));
@@ -305,6 +311,7 @@ export async function requestAskAnalysis(
   question: string,
   context?: { entityType: string; entityId: string },
   history: AskConversationTurn[] = [],
+  aiConfig?: { provider: string; model: string; baseUrl: string; apiKey: string | null } | null,
 ): Promise<AskAnalysisResult> {
   const logger = getLogger();
   const deterministic = await answerQuestion(repositoryId, question, history);
@@ -325,7 +332,7 @@ export async function requestAskAnalysis(
     return cached;
   }
 
-  const ai = await analyzeWithAi(deterministic, history);
+  const ai = await analyzeWithAi(deterministic, history, aiConfig);
 
   let result: AskAnalysisResult;
   if ("aiUnavailable" in ai) {

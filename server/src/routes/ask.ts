@@ -12,6 +12,7 @@ import {
   mergeDeterministicWithAi,
 } from "../services/ask-analysis.service.js";
 import { getAiConfig } from "../services/ai-provider.js";
+import { resolveAiConfig } from "../services/ai-registry.js";
 
 const idParams = {
   type: "object",
@@ -183,7 +184,12 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
 
       const deterministic = await answerQuestion(id, question.trim(), history ?? []);
 
-      const aiResult = await requestAskAnalysis(id, question.trim(), context ?? undefined, history ?? []);
+      // Resolve user's AI config (user config takes precedence over system config)
+      // requireAuth preHandler guarantees request.user exists
+      const userId = request.user!.id;
+      const aiConfig = await resolveAiConfig(userId);
+
+      const aiResult = await requestAskAnalysis(id, question.trim(), context ?? undefined, history ?? [], aiConfig ?? undefined);
 
       const merged = mergeDeterministicWithAi(deterministic, aiResult.analysis ?? { aiUnavailable: true });
 
@@ -204,8 +210,8 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
         metadata: merged.metadata,
         ai: {
           available: aiResult.status === "completed",
-          provider: config?.provider ?? null,
-          model: config?.model ?? null,
+          provider: aiConfig?.provider ?? config?.provider ?? null,
+          model: aiConfig?.model ?? config?.model ?? null,
           cached: aiResult.cached,
           status: aiResult.status,
           fingerprint: aiResult.fingerprint || null,

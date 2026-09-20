@@ -15,6 +15,7 @@ import {
   Search,
   ExternalLink,
   HelpCircle,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { api, ApiError, type GraphResponse, type ConnectedRepo } from '../lib/api/client';
@@ -68,7 +69,11 @@ const EDGE_TYPE_LABELS: Record<string, string> = {
 };
 
 function NodeBadge({ type, label }: { type: string; label: string }) {
-  const Icon = NODE_TYPE_ICONS[type] ?? <HelpCircle size={12} className="text-text-muted" />;
+  const Icon = NODE_TYPE_ICONS[type] ?? (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-text-muted">
+      <rect x="2" y="2" width="12" height="12" rx="2" fill="currentColor" />
+    </svg>
+  );
   return (
     <span className="inline-flex items-center gap-1 rounded border border-border-secondary bg-bg-tertiary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-secondary">
       {Icon}
@@ -105,11 +110,13 @@ function GraphListView({
   selectedNodeId,
   onSelectNode,
   filter,
+  setFilter,
 }: {
   graph: { nodes: Array<{ id: string; type: string; label: string; metadata: Record<string, unknown> }>; edges: Array<{ id: string; sourceId: string; targetId: string; type: string; evidenceIds: string[]; provenance: { source: string; reason: string } }> };
   selectedNodeId: string | null;
   onSelectNode: (id: string | null) => void;
   filter: string;
+  setFilter: (value: string) => void;
 }) {
   const filteredNodes = graph.nodes.filter((node) =>
     node.label.toLowerCase().includes(filter.toLowerCase()) ||
@@ -128,7 +135,7 @@ function GraphListView({
         <Search size={13} className="shrink-0 text-text-muted" />
         <input
           value={filter}
-          onChange={(e) => filterChange(e.target.value)}
+          onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter nodes by label, ID, or type…"
           className="w-48 bg-transparent font-mono text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none"
         />
@@ -178,10 +185,89 @@ function GraphListView({
       </div>
     </div>
   );
+}
 
-  function filterChange(_value: string) {
-    // This would need to be hooked up to parent state
-  }
+function NodeDetailView({
+  node,
+  edges,
+  effectiveId,
+  selectedNodeId,
+}: {
+  node: { id: string; type: string; label: string; metadata: Record<string, unknown> };
+  edges: Array<{ id: string; sourceId: string; targetId: string; type: string; evidenceIds: string[]; provenance: { source: string; reason: string } }>;
+  effectiveId: string;
+  selectedNodeId: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <NodeBadge type={node.type} label={NODE_TYPE_LABELS[node.type] ?? node.type} />
+          <h3 className="font-mono text-sm font-medium text-text-primary truncate max-w-[300px]">{node.label}</h3>
+        </div>
+        <span className="font-mono text-[11px] text-text-muted">{node.id}</span>
+      </div>
+      <div className="grid grid-cols-1 gap-2 text-xs">
+        {Object.entries(node.metadata).map(([key, value]) => value != null && value !== '' && (
+          <div key={key} className="flex items-start gap-2 p-2 bg-bg-tertiary rounded">
+            <span className="font-medium text-text-secondary min-w-[100px]">{key}:</span>
+            <span className="break-all font-mono text-[11px] text-text-primary">{String(value)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="pt-3 border-t border-border-primary">
+        <Link
+          to={`/ask?repositoryId=${effectiveId}&entityType=${node.type}&entityId=${encodeURIComponent(node.id)}`}
+          className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+        >
+          <Sparkles size={12} /> Investigate with Ask RepoPilot
+        </Link>
+      </div>
+      {(() => {
+        const connectedEdges = edges.filter(
+          (e) => e.sourceId === selectedNodeId || e.targetId === selectedNodeId
+        );
+        if (connectedEdges.length === 0) return null;
+        return (
+          <div className="border-t border-border-primary pt-3">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Relationships</h4>
+            <div className="space-y-2">
+              {connectedEdges.map((edge) => {
+                const isOutgoing = edge.sourceId === selectedNodeId;
+                return (
+                  <div key={edge.id} className="flex items-start gap-2 p-2 bg-bg-tertiary rounded">
+                    <span className={clsx(
+                      'flex-shrink-0 text-[10px] font-medium',
+                      isOutgoing ? 'text-info' : 'text-warning'
+                    )}>
+                      {isOutgoing ? '→' : '←'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <NodeBadge type={edge.type} label={EDGE_TYPE_LABELS[edge.type] ?? edge.type} />
+                        <span className="truncate text-text-secondary font-mono text-[11px]">
+                          {isOutgoing ? edge.targetId : edge.sourceId}
+                        </span>
+                      </div>
+                      <EdgeProvenance edge={edge} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+      <div className="pt-3 border-t border-border-primary">
+        <Link
+          to={`/repository/${effectiveId}`}
+          className="inline-flex items-center gap-1.5 rounded border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+        >
+          <ExternalLink size={12} /> Open repository
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 export function KnowledgeGraphPage() {
@@ -198,6 +284,11 @@ export function KnowledgeGraphPage() {
   const [filter, setFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'list' | 'detail'>('list');
   const requestRef = useRef(0);
+
+  // Deep link helpers
+  function stableNodeId(type: string, repositoryId: string, identifier: string): string {
+    return `${type}:${repositoryId}:${identifier}`;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -255,6 +346,16 @@ export function KnowledgeGraphPage() {
     loadGraph(effectiveId);
   }, [effectiveId, loadGraph]);
 
+  // Handle deep links: ?entityType=incident&entityId=<id>
+  useEffect(() => {
+    const entityType = searchParams.get('entityType');
+    const entityId = searchParams.get('entityId');
+    if (entityType && entityId && effectiveId) {
+      loadGraph(effectiveId, { entityType, entityId, depth: 2 });
+      setSelectedNodeId(stableNodeId(entityType, effectiveId, entityId));
+    }
+  }, [searchParams, effectiveId, loadGraph]);
+
   const handleSelectRepo = useCallback(
     (repositoryId: string) => {
       setSelectedId(repositoryId);
@@ -275,21 +376,6 @@ export function KnowledgeGraphPage() {
     },
     [setSearchParams],
   );
-
-  // Deep link helpers
-  function stableNodeId(type: string, repositoryId: string, identifier: string): string {
-    return `${type}:${repositoryId}:${identifier}`;
-  }
-
-  // Handle deep links: ?entityType=incident&entityId=<id>
-  useEffect(() => {
-    const entityType = searchParams.get('entityType');
-    const entityId = searchParams.get('entityId');
-    if (entityType && entityId && effectiveId) {
-      loadGraph(effectiveId, { entityType, entityId, depth: 2 });
-      setSelectedNodeId(stableNodeId(entityType, effectiveId, entityId));
-    }
-  }, [searchParams, effectiveId, loadGraph]);
 
   if (repos === null) {
     return <LoadingState type="dashboard" />;
@@ -409,6 +495,7 @@ export function KnowledgeGraphPage() {
                 selectedNodeId={selectedNodeId}
                 onSelectNode={setSelectedNodeId}
                 filter={filter}
+                setFilter={setFilter}
               />
             </div>
           )}
@@ -423,66 +510,12 @@ export function KnowledgeGraphPage() {
                   </div>
                 );
                 return (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <NodeBadge type={node.type} label={NODE_TYPE_LABELS[node.type] ?? node.type} />
-                        <h3 className="font-mono text-sm font-medium text-text-primary truncate max-w-[300px]">{node.label}</h3>
-                      </div>
-                      <span className="font-mono text-[11px] text-text-muted">{node.id}</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 text-xs">
-                      {Object.entries(node.metadata).map(([key, value]) => value != null && value !== '' && (
-                        <div key={key} className="flex items-start gap-2 p-2 bg-bg-tertiary rounded">
-                          <span className="font-medium text-text-secondary min-w-[100px]">{key}:</span>
-                          <span className="break-all font-mono text-[11px] text-text-primary">{String(value)}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {(() => {
-                      const edges = graph.edges.filter(
-                        (e) => e.sourceId === selectedNodeId || e.targetId === selectedNodeId
-                      );
-                      if (edges.length === 0) return null;
-                      return (
-                        <div className="border-t border-border-primary pt-3">
-                          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Relationships</h4>
-                          <div className="space-y-2">
-                            {edges.map((edge) => {
-                              const isOutgoing = edge.sourceId === selectedNodeId;
-                              return (
-                                <div key={edge.id} className="flex items-start gap-2 p-2 bg-bg-tertiary rounded">
-                                  <span className={clsx(
-                                    'flex-shrink-0 text-[10px] font-medium',
-                                    isOutgoing ? 'text-info' : 'text-warning'
-                                  )}>
-                                    {isOutgoing ? '→' : '←'}
-                                  </span>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1.5 mb-1">
-                                      <NodeBadge type={edge.type} label={EDGE_TYPE_LABELS[edge.type] ?? edge.type} />
-                                      <span className="truncate text-text-secondary font-mono text-[11px]">
-                                        {isOutgoing ? edge.targetId : edge.sourceId}
-                                      </span>
-                                    </div>
-                                    <EdgeProvenance edge={edge} />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    <div className="pt-3 border-t border-border-primary">
-                      <Link
-                        to={`/repository/${effectiveId}`}
-                        className="inline-flex items-center gap-1.5 rounded border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-                      >
-                        <ExternalLink size={12} /> Open repository
-                      </Link>
-                    </div>
-                  </div>
+                  <NodeDetailView
+                    node={node}
+                    edges={graph.edges}
+                    effectiveId={effectiveId!}
+                    selectedNodeId={selectedNodeId!}
+                  />
                 );
               })()}
             </div>

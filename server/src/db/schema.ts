@@ -964,3 +964,33 @@ export const askAnalyses = pgTable(
 
 export type AskAnalysis = typeof askAnalyses.$inferSelect;
 export type NewAskAnalysis = typeof askAnalyses.$inferInsert;
+
+/**
+ * User AI provider configurations (Phase 17).
+ * Each user can configure their own AI provider with encrypted API key.
+ */
+export const userAiProviders = pgTable(
+  "user_ai_providers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    provider: varchar("provider", { length: 100 }).notNull(),
+    model: varchar("model", { length: 255 }).notNull(),
+    baseUrl: varchar("base_url", { length: 500 }),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    apiKeyIv: varchar("api_key_iv", { length: 64 }),
+    apiKeyTag: varchar("api_key_tag", { length: 64 }),
+    isActive: boolean("is_active").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("user_ai_providers_user_provider_idx").on(table.userId, table.provider),
+    index("user_ai_providers_user_idx").on(table.userId),
+  ],
+);
+
+export type UserAiProvider = typeof userAiProviders.$inferSelect;
+export type NewUserAiProvider = typeof userAiProviders.$inferInsert;
