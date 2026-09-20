@@ -330,6 +330,24 @@ class ApiClient {
     });
   }
 
+  async getGraph(
+    id: string,
+    params?: {
+      entityType?: string;
+      entityId?: string;
+      depth?: number;
+      limit?: number;
+    },
+  ): Promise<GraphResponse> {
+    const search = new URLSearchParams();
+    if (params?.entityType) search.set('entityType', params.entityType);
+    if (params?.entityId) search.set('entityId', params.entityId);
+    if (params?.depth) search.set('depth', String(params.depth));
+    if (params?.limit) search.set('limit', String(params.limit));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return this.request<GraphResponse>(`/api/repositories/${id}/graph${suffix}`);
+  }
+
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -1166,6 +1184,40 @@ export interface AskResponse {
     truncated: boolean;
   };
   ai: AskAiInfo;
+}
+
+export interface GraphNode {
+  id: string;
+  type: string;
+  label: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface GraphEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  type: string;
+  evidenceIds: string[];
+  provenance: {
+    source: string;
+    reason: string;
+  };
+}
+
+export interface GraphMeta {
+  depth: number;
+  nodeCount: number;
+  edgeCount: number;
+  truncated: boolean;
+}
+
+export interface GraphResponse {
+  repositoryId: string;
+  root: { id: string; type: string } | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  meta: GraphMeta;
 }
 
 export class ApiError extends Error {

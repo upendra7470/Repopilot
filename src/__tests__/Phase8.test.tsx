@@ -3,7 +3,6 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { CICDPage } from '../pages/CICDPage';
 import { ComponentsPage } from '../pages/ComponentsPage';
-import { KnowledgeGraphPage } from '../pages/KnowledgeGraphPage';
 import { RepoContextHeader } from '../components/repo/RepoContextHeader';
 import { NotAvailable } from '../components/ui/NotAvailable';
 import { Panel } from '../components/ui/Panel';
@@ -42,7 +41,6 @@ describe('Phase 8 unfinished sections are honest', () => {  afterEach(() => {
 
   it.each([
     ['Components', ComponentsPage],
-    ['Knowledge Graph', KnowledgeGraphPage],
   ])('%s states unavailability without demo data', (_label, Page) => {
     renderWithRouter(<Page />);
     expect(screen.getByText('Not yet available')).toBeInTheDocument();

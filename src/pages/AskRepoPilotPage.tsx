@@ -208,7 +208,7 @@ export function AskRepoPilotPage() {
         setWorking(false);
       }
     }
-  }, [effectiveId, question, history]);
+  }, [effectiveId, question, history, working]);
 
   const handleSuggestedClick = useCallback((q: string) => {
     setQuestion(q);
