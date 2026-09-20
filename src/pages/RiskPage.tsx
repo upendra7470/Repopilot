@@ -11,6 +11,7 @@ import {
   Zap,
   History,
   Undo2,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { RiskBadge } from '../components/ui/RiskBadge';
@@ -391,6 +392,15 @@ export function RiskPage() {
                     </p>
                   </div>
                 ))}
+              </div>
+
+              <div className="mt-4">
+                <Link
+                  to={`/ask?repositoryId=${report.repository.id}`}
+                  className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+                >
+                  <Sparkles size={12} /> Investigate with Ask RepoPilot
+                </Link>
               </div>
 
               {report.findings.length === 0 ? (

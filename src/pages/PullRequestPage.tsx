@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   History,
   Users,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -850,6 +851,12 @@ export function PullRequestPage() {
                       {/* Review path */}
                       <Panel title="Review path">
                         <div className="flex flex-wrap gap-1.5">
+                          <Link
+                            to={`/ask?repositoryId=${effectiveId}`}
+                            className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+                          >
+                            <Sparkles size={12} /> Investigate with Ask RepoPilot
+                          </Link>
                           <Link
                             to={`/repository/${effectiveId}?tab=timeline`}
                             className="inline-flex items-center gap-1.5 rounded border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"

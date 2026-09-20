@@ -926,3 +926,41 @@ export const briefAnalyses = pgTable(
 
 export type BriefAnalysis = typeof briefAnalyses.$inferSelect;
 export type NewBriefAnalysis = typeof briefAnalyses.$inferInsert;
+
+/**
+ * Cached AI Ask RepoPilot analyses (Phase 15.1). The deterministic
+ * retrieval is computed on every read from existing intelligence — only
+ * AI enhancements are cached, keyed by repository plus the question +
+ * context fingerprint. Any evidence change invalidates the cache entry.
+ */
+export const askAnalyses = pgTable(
+  "ask_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repositoryId: uuid("repository_id")
+      .references(() => repositories.id, { onDelete: "cascade" })
+      .notNull(),
+    questionHash: varchar("question_hash", { length: 64 }).notNull(),
+    evidenceFingerprint: varchar("evidence_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    model: varchar("model", { length: 255 }),
+    summary: text("summary"),
+    assessment: varchar("assessment", { length: 20 }),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("ask_analyses_repo_question_fingerprint_idx").on(
+      table.repositoryId,
+      table.questionHash,
+      table.evidenceFingerprint,
+    ),
+    index("ask_analyses_repo_idx").on(table.repositoryId),
+  ],
+);
+
+export type AskAnalysis = typeof askAnalyses.$inferSelect;
+export type NewAskAnalysis = typeof askAnalyses.$inferInsert;

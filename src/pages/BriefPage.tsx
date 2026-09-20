@@ -6,6 +6,7 @@ import {
   Check,
   RefreshCw,
   ScrollText,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -700,6 +701,17 @@ export function BriefPage() {
                   windowFilter={windowFilter}
                   evidenceCount={brief.evidence.length}
                 />
+
+                <Panel title="Investigate with Ask RepoPilot" subtitle="Ask a follow-up question about this brief." dense>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Link
+                      to={`/ask?repositoryId=${effectiveId}`}
+                      className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+                    >
+                      <Sparkles size={12} /> Ask about this brief
+                    </Link>
+                  </div>
+                </Panel>
 
                 <Panel title="Evidence index" subtitle={`${brief.evidence.length} references backing this brief.`} dense>
                   <details>

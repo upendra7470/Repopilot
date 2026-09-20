@@ -1,36 +1,492 @@
-import { Link } from 'react-router-dom';
-import { Sparkles } from 'lucide-react';
-import { NotAvailable } from '../components/ui/NotAvailable';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  LoaderCircle,
+  Copy,
+  HelpCircle,
+  Sparkles,
+} from 'lucide-react';
+import clsx from 'clsx';
+import { api, ApiError, type AskResponse, type ConnectedRepo } from '../lib/api/client';
+import { RepoContextHeader } from '../components/repo/RepoContextHeader';
+import { Panel } from '../components/ui/Panel';
+import { LoadingState } from '../components/ui/LoadingState';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorState } from '../components/ui/ErrorState';
+import { StatusBadge } from '../components/ui/StatusBadge';
+
+const SUGGESTED_QUESTIONS = [
+  'What changed recently?',
+  'Why is CI unstable?',
+  'What happened in the latest incident?',
+  'What risks need attention?',
+  'Which files are involved in failures?',
+];
+
+const MAX_QUESTION_LENGTH = 500;
+
+function entityHref(repositoryId: string, entityType: string, entityId: string): string | null {
+  switch (entityType) {
+    case 'commit':
+      return `/repository/${repositoryId}?tab=timeline`;
+    case 'pr':
+      return `/pull-requests?repositoryId=${repositoryId}`;
+    case 'issue':
+      return `/issues?repositoryId=${repositoryId}`;
+    case 'run':
+      return `/ci-cd?repositoryId=${repositoryId}`;
+    case 'incident':
+      return `/incidents?repositoryId=${repositoryId}&incident=${encodeURIComponent(entityId)}`;
+    case 'risk':
+      return `/risks?repositoryId=${repositoryId}`;
+    case 'file':
+      return `/repository/${repositoryId}?tab=files&path=${encodeURIComponent(entityId)}`;
+    case 'workflow':
+      return `/ci-cd?repositoryId=${repositoryId}`;
+    case 'contributor':
+      return `/contributors?repositoryId=${repositoryId}`;
+    default:
+      return null;
+  }
+}
+
+function evidenceHref(repositoryId: string, item: AskResponse['evidence'][0]): string | null {
+  return entityHref(repositoryId, item.entityType, item.entityId);
+}
+
+function FindingItem({
+  finding,
+}: {
+  finding: AskResponse['keyFindings'][0];
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="text-text-secondary" aria-hidden="true">•</span>
+      <span className="flex-1 min-w-0 text-text-primary">{finding.text}</span>
+      {finding.evidenceIds.length > 0 && (
+        <span className="flex-shrink-0 ml-2 font-mono text-[11px] text-text-muted">
+          Evidence: {finding.evidenceIds.slice(0, 4).join(', ')}
+          {finding.evidenceIds.length > 4 && ` +${finding.evidenceIds.length - 4} more`}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function EvidenceItem({
+  item,
+  repositoryId,
+}: {
+  item: AskResponse['evidence'][0];
+  repositoryId: string;
+}) {
+  const href = evidenceHref(repositoryId, item);
+  const content = (
+    <>
+      <span className="font-mono text-[11px] text-accent">{item.id}</span>
+      <span className="text-text-muted"> · </span>
+      <span className="font-medium text-text-primary">{item.label}</span>
+      <span className="text-text-muted"> — </span>
+      <span className="text-text-secondary">{item.detail}</span>
+      {item.at && (
+        <>
+          <span className="text-text-muted"> @ </span>
+          <span className="font-mono text-[11px] text-text-muted">{new Date(item.at).toLocaleString()}</span>
+        </>
+      )}
+    </>
+  );
+
+  return (
+    <div className="flex items-center gap-1.5 px-2 py-1.5 border-y border-border-primary">
+      {href ? (
+        <Link to={href} className="flex min-w-0 flex-1 items-center gap-1.5 hover:underline">
+          {content}
+        </Link>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">{content}</span>
+      )}
+    </div>
+  );
+}
 
 export function AskRepoPilotPage() {
-  return (
-    <div className="mx-auto max-w-2xl space-y-3">
-      <div className="text-center">
-        <div className="flex items-center justify-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded border border-accent/40 bg-accent-muted text-accent">
-            <Sparkles size={18} />
-          </div>
-          <h1 className="text-lg font-semibold tracking-tight text-text-primary">Ask RepoPilot</h1>
-        </div>
-        <p className="mt-1 text-xs text-text-secondary">
-          Conversational answers over engineering memory.
-        </p>
-      </div>
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [repos, setRepos] = useState<ConnectedRepo[] | null>(null);
+  const [reposError, setReposError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    searchParams.get('repositoryId'),
+  );
+  const [question, setQuestion] = useState('');
+  const [response, setResponse] = useState<AskResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const [history, setHistory] = useState<Array<{ question: string; evidenceIds: string[] }>>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const requestRef = useRef(0);
 
-      <NotAvailable
+  useEffect(() => {
+    let cancelled = false;
+    void api.listConnectedRepositories().then(
+      (list) => {
+        if (!cancelled) {
+          setRepos(list);
+          setReposError(null);
+        }
+      },
+      (err: unknown) => {
+        if (!cancelled) {
+          setRepos([]);
+          setReposError(err instanceof ApiError ? err.message : 'Failed to load repositories.');
+        }
+      },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
+  const effectiveId = useMemo(() => {
+    if (selectedId) return selectedId;
+    if (repos && repos.length > 0) return repos[0].id;
+    return null;
+  }, [selectedId, repos]);
+
+  const effectiveRepo = useMemo(
+    () => repos?.find((r) => r.id === effectiveId) ?? null,
+    [repos, effectiveId],
+  );
+
+  const handleSelectRepo = useCallback(
+    (repositoryId: string) => {
+      setSelectedId(repositoryId);
+      setResponse(null);
+      setError(null);
+      setQuestion('');
+      setHistory([]);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('repositoryId', repositoryId);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!effectiveId || !question.trim() || working) return;
+
+    const trimmed = question.trim();
+    if (trimmed.length < 3) {
+      setError('Question must be at least 3 characters');
+      return;
+    }
+    if (trimmed.length > MAX_QUESTION_LENGTH) {
+      setError(`Question must not exceed ${MAX_QUESTION_LENGTH} characters`);
+      return;
+    }
+
+    setWorking(true);
+    setError(null);
+    const requestId = (requestRef.current += 1);
+
+    try {
+      const res = await api.askQuestion(effectiveId, trimmed, undefined, history);
+      if (requestRef.current === requestId) {
+        setResponse(res);
+        setHistory((prev) => [...prev.slice(-2), { question: trimmed, evidenceIds: res.evidence.map((e) => e.id) }]);
+      }
+    } catch (err) {
+      if (requestRef.current === requestId) {
+        setError(err instanceof ApiError ? err.message : 'Request failed');
+        setResponse(null);
+      }
+    } finally {
+      if (requestRef.current === requestId) {
+        setWorking(false);
+      }
+    }
+  }, [effectiveId, question, history]);
+
+  const handleSuggestedClick = useCallback((q: string) => {
+    setQuestion(q);
+    textareaRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e as unknown as React.FormEvent);
+    }
+  }, [handleSubmit]);
+
+  const copyQuestion = useCallback(() => {
+    navigator.clipboard.writeText(question);
+  }, [question]);
+
+  if (repos === null) {
+    return <LoadingState type="dashboard" />;
+  }
+
+  if (reposError) {
+    return (
+      <ErrorState
+        title="Could not load repositories"
+        message={reposError}
+        onRetry={() => window.location.reload()}
+      />
+    );
+  }
+
+  if (repos.length === 0) {
+    return (
+      <EmptyState
         icon={<Sparkles size={18} />}
-        title="Conversational Q&A is not available yet"
-        description="Ask RepoPilot is explicitly out of scope until deterministic intelligence (Risks, PR Intelligence, Timeline) is solid. Grounded PR analysis is available today on the PR Intelligence page — every claim cites synced evidence, and unknown answers stay unknown."
-        meta="scope: ask · status: planned — grounded analysis available per-PR"
+        title="No connected repositories"
+        description="Connect a GitHub repository and sync it. Ask RepoPilot investigates your synchronized repository evidence."
         action={
           <Link
-            to="/pull-requests"
+            to="/repository"
             className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
           >
-            Try grounded PR analysis
+            Go to repositories
           </Link>
         }
       />
+    );
+  }
+
+  if (!effectiveRepo) {
+    return null;
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-3">
+      <RepoContextHeader repo={effectiveRepo} />
+
+      {repos.length > 1 && (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Repository">
+          {repos.map((repo) => (
+            <button
+              key={repo.id}
+              onClick={() => handleSelectRepo(repo.id)}
+              className={clsx(
+                'rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                repo.id === effectiveId
+                  ? 'border-accent/40 bg-accent-muted text-accent'
+                  : 'border-border-primary bg-bg-secondary text-text-secondary hover:border-border-secondary',
+              )}
+            >
+              {repo.fullName}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+            Ask RepoPilot
+          </p>
+          <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3">
+            <h1 className="text-lg font-semibold tracking-tight text-text-primary">
+              Investigate your repository
+            </h1>
+            <p className="text-xs text-text-secondary">
+              Evidence-backed engineering intelligence. Every answer cites sources.
+            </p>
+          </div>
+        </div>
+
+        <Panel title="Question" subtitle="Enter an engineering question about this repository.">
+          <form onSubmit={handleSubmit} className="space-y-2">
+            <div className="relative">
+              <textarea
+                ref={textareaRef}
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={working}
+                placeholder="Why has CI been unstable recently?"
+                rows={3}
+                className={clsx(
+                  'w-full rounded border bg-bg-primary px-3 py-2 text-text-primary placeholder-text-muted transition-colors',
+                  'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40',
+                  'disabled:cursor-wait disabled:opacity-50',
+                  error && 'border-danger/40',
+                )}
+                aria-describedby={error ? 'question-error' : 'question-hint'}
+                maxLength={MAX_QUESTION_LENGTH}
+              />
+              <div className="absolute right-2 bottom-2 flex items-center gap-1">
+                <span
+                  id="question-hint"
+                  className={clsx(
+                    'font-mono text-[11px]',
+                    question.length > MAX_QUESTION_LENGTH * 0.8 ? 'text-accent' : 'text-text-muted',
+                  )}
+                >
+                  {question.length}/{MAX_QUESTION_LENGTH}
+                </span>
+                {question && !working && (
+                  <button
+                    type="button"
+                    onClick={copyQuestion}
+                    className="p-1 rounded hover:bg-bg-hover transition-colors"
+                    aria-label="Copy question"
+                  >
+                    <Copy size={12} className="text-text-muted" />
+                  </button>
+                )}
+              </div>
+            </div>
+            {error && (
+              <p id="question-error" role="alert" className="text-xs text-danger">
+                {error}
+              </p>
+            )}
+            <div className="flex items-center justify-between">
+              <button
+                type="submit"
+                disabled={working || !question.trim() || question.length < 3 || !effectiveId}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 rounded border bg-accent px-3 py-1.5 text-xs font-medium text-accent transition-colors',
+                  'hover:bg-accent/25 disabled:cursor-wait disabled:opacity-50 disabled:border-border-primary',
+                )}
+              >
+                {working ? (
+                  <>
+                    <LoaderCircle size={12} className="animate-spin" /> Investigating…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={12} /> Ask RepoPilot
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+
+          <p className="mt-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+            Suggested investigations
+          </p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {SUGGESTED_QUESTIONS.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => handleSuggestedClick(q)}
+                disabled={working}
+                className={clsx(
+                  'rounded border border-border-primary bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary transition-colors',
+                  'hover:border-accent/40 hover:bg-accent-muted hover:text-accent',
+                  'disabled:cursor-wait disabled:opacity-50',
+                )}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </Panel>
+
+        {response && (
+          <div key={response.question} className="animate-enter space-y-3">
+            <Panel title="Question" subtitle={response.intent}>
+              <p className="text-text-primary">{response.question}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <StatusBadge
+                  label={response.ai.available ? 'AI enhanced' : 'Deterministic only'}
+                  variant={response.ai.available ? 'success' : 'neutral'}
+                />
+                {response.ai.cached && (
+                  <StatusBadge label="Cached" variant="info" />
+                )}
+                {response.metadata.truncated && (
+                  <StatusBadge label="Evidence truncated" variant="warning" />
+                )}
+              </div>
+              <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-text-muted">
+                <span>Retrieved in {response.metadata.retrievalMs}ms</span>
+                <span>{response.metadata.evidenceCount} evidence items</span>
+                {response.ai.provider && <span>Model: {response.ai.model}</span>}
+              </div>
+            </Panel>
+
+            <Panel title="Answer" subtitle="Grounded explanation from repository evidence.">
+              <p className="text-[13px] leading-6 text-text-primary whitespace-pre-wrap">
+                {response.answer}
+              </p>
+              {response.assessment && (
+                <div className="mt-3">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                    Assessment
+                  </p>
+                  <p className="text-[13px] leading-5 text-text-secondary">{response.assessment}</p>
+                </div>
+              )}
+            </Panel>
+
+            {response.keyFindings.length > 0 && (
+              <Panel title="Key Findings" subtitle="Each finding cites its supporting evidence.">
+                <div className="space-y-2">
+                  {response.keyFindings.map((finding, idx) => (
+                    <FindingItem key={idx} finding={finding} />
+                  ))}
+                </div>
+              </Panel>
+            )}
+
+            <Panel title="Evidence" subtitle={`${response.evidence.length} references backing this answer.`}>
+              <div className="border border-border-primary rounded">
+                {response.evidence.map((item) => (
+                  <EvidenceItem key={item.id} item={item} repositoryId={effectiveId!} />
+                ))}
+              </div>
+            </Panel>
+
+            {response.unknowns.length > 0 && (
+              <Panel title="Unknowns" subtitle="Explicit limits of available evidence.">
+                <ul className="list-disc space-y-0.5 pl-4 text-xs text-text-muted">
+                  {response.unknowns.map((unknown, idx) => (
+                    <li key={idx}>{unknown}</li>
+                  ))}
+                </ul>
+              </Panel>
+            )}
+
+            {response.investigationNextSteps.length > 0 && (
+              <Panel title="Investigate Next" subtitle="Evidence-derived next steps.">
+                <div className="space-y-2">
+                  {response.investigationNextSteps.map((step, idx) => (
+                    <FindingItem key={idx} finding={step} />
+                  ))}
+                </div>
+              </Panel>
+            )}
+
+            <Panel title="AI Status" subtitle="Model and cache information." dense>
+              <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-text-muted">
+                <span>Status: {response.ai.status}</span>
+                {response.ai.fingerprint && (
+                  <span>Fingerprint: {response.ai.fingerprint.slice(0, 12)}…</span>
+                )}
+                {response.ai.error && (
+                  <span className="text-danger">Error: {response.ai.error.code}</span>
+                )}
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {!response && !working && !error && (
+          <div className="text-center py-8 text-text-muted">
+            <HelpCircle size={32} className="mx-auto mb-2 text-text-muted/50" />
+            <p className="text-sm">Enter a question above to start investigating.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

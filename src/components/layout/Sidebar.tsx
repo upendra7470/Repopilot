@@ -69,13 +69,19 @@ const sections: NavSection[] = [
       { id: 'knowledge-graph', label: 'Knowledge Graph', icon: BrainCircuit, status: 'soon' },
     ],
   },
-  {
-    title: 'Repository',
-    items: [
-      { id: 'repository', label: 'Repositories', icon: FolderGit2, status: 'active' },
-    ],
-  },
-];
+{
+        title: 'AI Investigation',
+        items: [
+          { id: 'ask', label: 'Ask RepoPilot', icon: Sparkles, status: 'active' },
+        ],
+      },
+      {
+        title: 'Repository',
+        items: [
+          { id: 'repository', label: 'Repositories', icon: FolderGit2, status: 'active' },
+        ],
+      },
+    ];
 
 /**
  * Workspace selector backed by the authenticated user's real connected
@@ -300,28 +306,6 @@ function SidebarInner({
 
       {/* Bottom actions */}
       <div className="space-y-px border-t border-border-primary px-2 py-2">
-        <button
-          onClick={() => {
-            onNavigate('ask');
-            onClose?.();
-          }}
-          className={clsx(
-            "flex w-full items-center gap-2 rounded border border-transparent px-2 py-1.5 text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary",
-            collapsed && "justify-center",
-            activeRoute === 'ask' && "border-border-secondary bg-bg-tertiary text-text-primary"
-          )}
-          title={collapsed ? "Ask RepoPilot" : undefined}
-        >
-          <Sparkles size={15} className="flex-shrink-0 text-text-muted" />
-          {!collapsed && (
-            <>
-              <span className="truncate text-[13px] font-medium">Ask RepoPilot</span>
-              <span className="ml-auto rounded border border-border-primary bg-bg-inset px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-text-muted">
-                Soon
-              </span>
-            </>
-          )}
-        </button>
         <button
           onClick={() => {
             onNavigate('settings');

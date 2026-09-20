@@ -318,6 +318,18 @@ class ApiClient {
     );
   }
 
+  async askQuestion(
+    id: string,
+    question: string,
+    context?: { entityType: string; entityId: string },
+    history?: Array<{ question: string; evidenceIds: string[] }>,
+  ): Promise<AskResponse> {
+    return this.request<AskResponse>(`/api/repositories/${id}/ask`, {
+      method: 'POST',
+      body: { question, context, history },
+    });
+  }
+
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -1095,6 +1107,65 @@ export interface MemorySearchResult {
   files: RepoFileItem[];
   commits: Array<{ sha: string; message: string | null; authorLogin: string | null; committedAt: string | null }>;
   contributors: Array<{ id: string; login: string; name: string | null }>;
+}
+
+export interface AskEntityRef {
+  kind: string;
+  value: string;
+  label: string;
+  ambiguous?: boolean;
+  unresolved?: boolean;
+}
+
+export interface AskEvidenceItem {
+  id: string;
+  kind: string;
+  label: string;
+  detail: string;
+  entityType: string;
+  entityId: string;
+  at: string | null;
+}
+
+export interface AskFinding {
+  text: string;
+  evidenceIds: string[];
+}
+
+export interface AskWindow {
+  label: string;
+  days: number;
+  since: string;
+}
+
+export interface AskAiInfo {
+  available: boolean;
+  provider: string | null;
+  model: string | null;
+  cached: boolean;
+  status: string;
+  fingerprint: string | null;
+  error: { code: string; message: string } | null;
+}
+
+export interface AskResponse {
+  question: string;
+  intent: string;
+  entities: AskEntityRef[];
+  window: AskWindow | null;
+  answer: string;
+  assessment: string;
+  keyFindings: AskFinding[];
+  evidence: AskEvidenceItem[];
+  unknowns: string[];
+  investigationNextSteps: AskFinding[];
+  relatedEntities: AskEntityRef[];
+  metadata: {
+    retrievalMs: number;
+    evidenceCount: number;
+    truncated: boolean;
+  };
+  ai: AskAiInfo;
 }
 
 export class ApiError extends Error {
