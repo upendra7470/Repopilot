@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { GitBranch, Bell, Palette, User, BrainCircuit, LoaderCircle, X, Zap, Shield, ExternalLink, ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { LoadingState } from '../components/ui/LoadingState'
 import { useAuth } from '../auth/useAuth'
-import { api, ApiError, type ConnectedRepo } from '../lib/api/client'
+import { api, ApiError, type ConnectedRepo, type DiscoveredModel, type KnownProvider } from '../lib/api/client'
+import { ModelPicker } from '../components/ai/ModelPicker'
 
 type SectionId = 'repository' | 'appearance' | 'account' | 'notifications' | 'ai';
 
@@ -173,15 +174,6 @@ function AccountSection() {
 }
 
 // AI Provider types
-interface KnownProvider {
-  id: string;
-  name: string;
-  description: string;
-  supportsModelListing: boolean;
-  defaultBaseUrl: string;
-  defaultModel: string;
-}
-
 interface UserProvider {
   id: string;
   provider: string;
@@ -209,6 +201,22 @@ function AIProviderSection() {
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Guided setup flow: provider → connect → models → test
+  type ModalStep = 'provider' | 'connect' | 'models' | 'test';
+  const [modalStep, setModalStep] = useState<ModalStep>('provider');
+  const [connState, setConnState] = useState<{ status: 'idle' | 'checking' | 'ok' | 'fail'; error: string | null; latencyMs: number | null }>({
+    status: 'idle', error: null, latencyMs: null,
+  });
+  const [modelTest, setModelTest] = useState<{ status: 'idle' | 'testing' | 'ok' | 'fail'; error: string | null }>({
+    status: 'idle', error: null,
+  });
+  // Dynamic model catalog (Cline/OpenCode-style selector)
+  const [discoveredModels, setDiscoveredModels] = useState<DiscoveredModel[] | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [discoverCached, setDiscoverCached] = useState(false);
+  const [customModelMode, setCustomModelMode] = useState(false);
+  const discoverSeq = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -272,6 +280,18 @@ function AIProviderSection() {
     }
   };
 
+  const resetModalState = () => {
+    setModalStep('provider');
+    setConnState({ status: 'idle', error: null, latencyMs: null });
+    setModelTest({ status: 'idle', error: null });
+    setDiscoveredModels(null);
+    setDiscoverError(null);
+    setDiscoverCached(false);
+    setDiscovering(false);
+    setCustomModelMode(false);
+    setFormError(null);
+  };
+
   const openAddDialog = (provider?: UserProvider) => {
     if (provider) {
       const known = knownProviders?.find(k => k.id === provider.provider);
@@ -286,37 +306,199 @@ function AIProviderSection() {
       setFormData({ provider: '', model: '', baseUrl: '', apiKey: '' });
       setEditingProvider(null);
     }
-    setFormError(null);
+    resetModalState();
     setShowAddDialog(true);
   };
 
-  const handleSave = async () => {
+  const closeDialog = () => {
+    setShowAddDialog(false);
+    setEditingProvider(null);
+  };
+
+  const selectedKnown = knownProviders?.find(k => k.id === formData.provider) ?? null;
+  const effectiveBaseUrl = formData.baseUrl.trim() || selectedKnown?.defaultBaseUrl || '';
+
+  // Escape-to-close for the modal.
+  useEffect(() => {
+    if (!showAddDialog) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeDialog();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAddDialog]);
+
+  const chooseProvider = (id: string) => {
+    const known = knownProviders?.find(k => k.id === id);
+    setFormData({ provider: id, model: '', baseUrl: known?.defaultBaseUrl ?? '', apiKey: '' });
+    setDiscoveredModels(null);
+    setDiscoverError(null);
+    setDiscoverCached(false);
+    setCustomModelMode(false);
+    setConnState({ status: 'idle', error: null, latencyMs: null });
+    setModelTest({ status: 'idle', error: null });
+    setFormError(null);
+    setModalStep('connect');
+  };
+
+  const friendlyConnError = (raw: string): string => {
+    const name = selectedKnown?.name ?? formData.provider;
+    if (/invalid api key/i.test(raw)) return `${name} rejected the API key.`;
+    if (/rate limit/i.test(raw)) return `${name} is rate limiting requests — try again shortly.`;
+    if (/unreachable|connection failed|timed out/i.test(raw)) return `${name} is unreachable. Check the base URL and network.`;
+    if (/base url/i.test(raw)) return 'That base URL is invalid.';
+    return raw;
+  };
+
+  const handleConnect = async () => {
+    const key = formData.apiKey.trim();
+    const keylessLocal = (formData.provider === 'ollama' || formData.provider === 'lmstudio') && effectiveBaseUrl;
+    if (!key && !keylessLocal) {
+      setConnState({ status: 'fail', error: 'Enter an API key to connect.', latencyMs: null });
+      return;
+    }
+    setConnState({ status: 'checking', error: null, latencyMs: null });
+    try {
+      const result = await api.testConnection({
+        provider: formData.provider,
+        apiKey: key || null,
+        baseUrl: effectiveBaseUrl || undefined,
+      });
+      if (result.success) {
+        setConnState({ status: 'ok', error: null, latencyMs: result.latencyMs });
+        setModalStep('models');
+        void runDiscovery();
+      } else {
+        setConnState({ status: 'fail', error: friendlyConnError(result.error ?? 'Connection failed'), latencyMs: result.latencyMs });
+      }
+    } catch (err) {
+      setConnState({ status: 'fail', error: friendlyConnError(err instanceof ApiError ? err.message : 'Connection failed'), latencyMs: null });
+    }
+  };
+
+  // Explicit discovery trigger: after Connect, on Refresh, or when loading
+  // from saved credentials. Never fires per keystroke.
+  const runDiscovery = async (refresh = false) => {
+    if (!formData.provider) return;
+    const seq = (discoverSeq.current += 1);
+    setDiscovering(true);
+    setDiscoverError(null);
+    try {
+      const result = await api.discoverModels({
+        provider: formData.provider,
+        apiKey: formData.apiKey.trim() || null,
+        baseUrl: effectiveBaseUrl || undefined,
+        refresh,
+      });
+      if (discoverSeq.current !== seq) return;
+      setDiscovering(false);
+      setDiscoverCached(result.cached);
+      if (result.error) {
+        setDiscoverError(result.error);
+        setDiscoveredModels(result.models.length > 0 ? result.models : null);
+        if (result.models.length === 0) setCustomModelMode(true);
+      } else {
+        setDiscoveredModels(result.models);
+        if (!formData.model && selectedKnown?.defaultModel && result.models.some(m => m.id === selectedKnown.defaultModel)) {
+          setFormData((prev) => ({ ...prev, model: selectedKnown.defaultModel }));
+        }
+      }
+    } catch (err) {
+      if (discoverSeq.current !== seq) return;
+      setDiscovering(false);
+      setDiscoverError(err instanceof ApiError ? err.message : 'Model discovery failed');
+      setCustomModelMode(true);
+    }
+  };
+
+  const loadFromSaved = async () => {
+    const seq = (discoverSeq.current += 1);
+    setDiscovering(true);
+    setDiscoverError(null);
+    try {
+      const result = await api.refreshModels(formData.provider, { refresh: true });
+      if (discoverSeq.current !== seq) return;
+      setDiscovering(false);
+      setDiscoverCached(result.cached);
+      if (result.error) {
+        setDiscoverError(result.error);
+        setDiscoveredModels(result.models.length > 0 ? result.models : null);
+        if (result.models.length === 0) setCustomModelMode(true);
+      } else {
+        setDiscoveredModels(result.models);
+      }
+    } catch (err) {
+      if (discoverSeq.current !== seq) return;
+      setDiscovering(false);
+      setDiscoverError(err instanceof ApiError ? err.message : 'Model discovery failed');
+      setCustomModelMode(true);
+    }
+  };
+
+  const selectModel = (id: string) => {
+    setFormData((prev) => ({ ...prev, model: id }));
+    setModelTest({ status: 'idle', error: null });
+    setModalStep('test');
+  };
+
+  const handleTestModel = async () => {
+    if (!formData.model) {
+      setFormError('Select a model first.');
+      return;
+    }
+    setModelTest({ status: 'testing', error: null });
+    try {
+      const result = await api.testAiProvider(formData.provider, {
+        model: formData.model,
+        baseUrl: effectiveBaseUrl,
+        apiKey: formData.apiKey.trim() || null,
+      });
+      if (result.success) {
+        setModelTest({ status: 'ok', error: null });
+      } else {
+        setModelTest({ status: 'fail', error: result.error ?? 'Model test failed' });
+      }
+    } catch (err) {
+      setModelTest({ status: 'fail', error: err instanceof ApiError ? err.message : 'Model test failed' });
+    }
+  };
+
+  const handleSaveAndActivate = async () => {
     setFormError(null);
     if (!formData.provider || !formData.model) {
       setFormError('Provider and model are required.');
       return;
     }
-    if (formData.baseUrl) {
-      try { new URL(formData.baseUrl); } catch { setFormError('Invalid base URL.'); return; }
+    if (effectiveBaseUrl) {
+      try { new URL(effectiveBaseUrl); } catch { setFormError('Invalid base URL.'); return; }
     }
     setSaving(true);
     try {
+      // Blank key keeps the existing encrypted key (edit mode).
       await api.saveAiProvider({
         provider: formData.provider,
         model: formData.model,
-        baseUrl: formData.baseUrl || null,
-        apiKey: formData.apiKey || null,
+        baseUrl: effectiveBaseUrl || null,
+        apiKey: formData.apiKey.trim() || null,
       });
-      // Reload providers
+      await api.setActiveAiProvider(formData.provider);
       const user = await api.getAiProviders();
       setUserProviders(user);
-      setShowAddDialog(false);
+      closeDialog();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Failed to save provider.');
     } finally {
       setSaving(false);
     }
   };
+
+  const modalSteps: Array<{ id: typeof modalStep; label: string }> = [
+    { id: 'provider', label: 'Provider' },
+    { id: 'connect', label: 'Connect' },
+    { id: 'models', label: 'Model' },
+    { id: 'test', label: 'Test' },
+  ];
+  const modalStepIndex = modalSteps.findIndex(s => s.id === modalStep);
 
   if (loading) return <LoadingState rows={5} />;
 
@@ -356,21 +538,26 @@ function AIProviderSection() {
                   const test = testResult?.provider === provider.provider ? testResult : null;
                   return (
                     <li key={provider.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-text-primary">{known?.name ?? provider.provider}</span>
-                          {provider.isActive && <StatusBadge label="Active" variant="success" size="sm" />}
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate font-mono text-xs text-text-primary" title={known?.name ?? provider.provider}>
+                            {known?.name ?? provider.provider}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-1.5 text-xs text-text-muted">
-                          <span>Model:</span>
-                          <span className="font-mono">{provider.model}</span>
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted min-w-0">
+                          <span className="shrink-0">Model:</span>
+                          <span className="font-mono truncate max-w-full sm:max-w-[220px]" title={provider.model}>{provider.model}</span>
                           {provider.baseUrl && (
                             <>
-                              <span>·</span>
-                              <span>Base:</span>
-                              <span className="font-mono truncate max-w-[200px]">{provider.baseUrl}</span>
+                              <span className="shrink-0">·</span>
+                              <span className="shrink-0">Base:</span>
+                              <span className="font-mono truncate max-w-full sm:max-w-[200px]" title={provider.baseUrl}>{provider.baseUrl}</span>
                             </>
                           )}
+                          <span className="shrink-0">·</span>
+                          <span className="font-mono text-[10px] shrink-0" title={`Created ${new Date(provider.createdAt).toLocaleString()}`}>
+                            Updated {new Date(provider.updatedAt).toLocaleDateString()}
+                          </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -427,89 +614,282 @@ function AIProviderSection() {
             )}
           </div>
 
-          {/* Add provider dialog */}
+          {/* Add / edit provider dialog: guided setup flow */}
           {showAddDialog && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-              <div className="w-full max-w-md bg-bg-secondary border border-border-primary rounded-lg p-4 space-y-4">
-                <h3 className="text-sm font-semibold text-text-primary">
-                  {editingProvider ? 'Edit Provider' : 'Add AI Provider'}
-                </h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Provider</label>
-                    <select
-                      value={formData.provider}
-                      onChange={e => setFormData({ ...formData, provider: e.target.value, model: '', baseUrl: '' })}
-                      className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
-                      disabled={!!editingProvider || saving}
-                    >
-                      <option value="">Select provider</option>
-                      {knownProviders?.map(k => (
-                        <option key={k.id} value={k.id}>{k.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Model</label>
-                    <input
-                      type="text"
-                      value={formData.model}
-                      onChange={e => setFormData({ ...formData, model: e.target.value })}
-                      placeholder="e.g. gpt-4o-mini"
-                      className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
-                      disabled={saving}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Base URL (optional)</label>
-                    <input
-                      type="text"
-                      value={formData.baseUrl}
-                      onChange={e => setFormData({ ...formData, baseUrl: e.target.value })}
-                      placeholder="https://api.openai.com/v1"
-                      className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
-                      disabled={saving}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1">API Key</label>
-                    <input
-                      type="password"
-                      value={formData.apiKey}
-                      onChange={e => setFormData({ ...formData, apiKey: e.target.value })}
-                      placeholder={editingProvider ? 'Leave blank to keep current key' : 'Enter API key'}
-                      className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
-                      disabled={saving}
-                      autoComplete="new-password"
-                    />
-                    <p className="mt-0.5 text-[11px] text-text-muted">
-                      {editingProvider ? 'Leave blank to keep the existing encrypted key.' : 'The key will be encrypted and stored server-side.'}
-                    </p>
-                  </div>
-                  {formError && (
-                    <p role="alert" className="text-xs text-danger">{formError}</p>
-                  )}
-                </div>
-                <div className="flex justify-end gap-2 pt-2">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label={editingProvider ? 'Edit AI provider' : 'Add AI provider'}>
+              <div className="max-h-[90vh] w-full max-w-md overflow-y-auto bg-bg-secondary border border-border-primary rounded-lg p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    {editingProvider ? 'Edit Provider' : 'Add AI Provider'}
+                  </h3>
                   <button
-                    onClick={() => { setShowAddDialog(false); setEditingProvider(null); }}
+                    onClick={closeDialog}
+                    disabled={saving}
+                    aria-label="Close dialog"
+                    className="rounded p-1 text-text-muted hover:text-text-primary disabled:opacity-50"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+
+                {/* Step indicator */}
+                <ol className="flex items-center gap-1" aria-label="Setup progress">
+                  {modalSteps.map((s, i) => (
+                    <li key={s.id} className="flex flex-1 items-center gap-1">
+                      <span
+                        aria-current={s.id === modalStep ? 'step' : undefined}
+                        className={clsx(
+                          'flex-1 rounded px-1.5 py-1 text-center text-[10px] font-medium uppercase tracking-wider transition-colors',
+                          i < modalStepIndex && 'bg-accent-muted text-accent',
+                          i === modalStepIndex && 'border border-accent/40 bg-accent-muted text-accent',
+                          i > modalStepIndex && 'bg-bg-tertiary text-text-muted',
+                        )}
+                      >
+                        {s.label}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+
+                {/* STEP: provider selection */}
+                {modalStep === 'provider' && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-text-muted">Select a provider. Model catalogs are fetched live — nothing is hardcoded.</p>
+                    <ul className="max-h-72 space-y-1 overflow-y-auto" role="listbox" aria-label="AI providers">
+                      {knownProviders?.map(k => (
+                        <li key={k.id}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={formData.provider === k.id}
+                            onClick={() => chooseProvider(k.id)}
+                            autoFocus={formData.provider === k.id}
+                            className={clsx(
+                              'flex w-full items-center gap-2 rounded border px-2.5 py-2 text-left transition-colors',
+                              'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                              formData.provider === k.id
+                                ? 'border-accent/40 bg-accent-muted'
+                                : 'border-border-primary bg-bg-tertiary hover:border-border-secondary',
+                            )}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-medium text-text-primary">{k.name}</span>
+                              <span className="block truncate font-mono text-[10px] text-text-muted">
+                                {k.protocol === 'openai-compatible' ? 'OpenAI-compatible' : 'Native Anthropic'}
+                              </span>
+                            </span>
+                            <span className="shrink-0">
+                              {k.capabilities.modelDiscovery ? (
+                                <StatusBadge label="Live catalog" variant="info" size="sm" />
+                              ) : (
+                                <StatusBadge label="Manual entry" variant="neutral" size="sm" />
+                              )}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* STEP: credentials + connect */}
+                {modalStep === 'connect' && selectedKnown && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setModalStep('provider')} className="text-[11px] text-text-muted hover:text-text-primary">
+                        ← Providers
+                      </button>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary" title={selectedKnown.name}>{selectedKnown.name}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-text-muted">
+                        {selectedKnown.protocol === 'openai-compatible' ? 'OpenAI-compatible' : 'Native'}
+                      </span>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1" htmlFor="ai-base-url">Base URL</label>
+                      <input
+                        id="ai-base-url"
+                        type="text"
+                        value={formData.baseUrl}
+                        onChange={e => setFormData({ ...formData, baseUrl: e.target.value })}
+                        placeholder={selectedKnown.defaultBaseUrl || 'https://…'}
+                        className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 font-mono text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                        disabled={connState.status === 'checking'}
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1" htmlFor="ai-api-key">API Key</label>
+                      <input
+                        id="ai-api-key"
+                        type="password"
+                        value={formData.apiKey}
+                        onChange={e => { setFormData({ ...formData, apiKey: e.target.value }); setConnState({ status: 'idle', error: null, latencyMs: null }); }}
+                        onKeyDown={e => { if (e.key === 'Enter') void handleConnect(); }}
+                        placeholder={editingProvider ? 'Leave blank to keep the stored key' : 'Enter API key'}
+                        className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 font-mono text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                        disabled={connState.status === 'checking'}
+                        autoComplete="new-password"
+                      />
+                      <p className="mt-0.5 text-[11px] text-text-muted">
+                        The key is validated server-side and encrypted at rest — it never leaves the server.
+                      </p>
+                    </div>
+                    {connState.status === 'fail' && (
+                      <p role="alert" className="rounded border border-danger/25 bg-danger/[0.05] px-2.5 py-2 text-xs text-danger">
+                        {connState.error}
+                      </p>
+                    )}
+                    <button
+                      onClick={() => void handleConnect()}
+                      disabled={connState.status === 'checking'}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded border border-accent/40 bg-accent-muted px-3 py-2 text-xs font-medium text-accent transition-colors hover:bg-accent/25 disabled:cursor-wait disabled:opacity-50"
+                    >
+                      {connState.status === 'checking' ? (
+                        <><LoaderCircle size={12} className="animate-spin" /> Connecting… checking credentials…</>
+                      ) : (
+                        <><Zap size={12} /> Connect</>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP: model selection */}
+                {modalStep === 'models' && selectedKnown && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setModalStep('connect')} className="text-[11px] text-text-muted hover:text-text-primary">
+                        ← Connect
+                      </button>
+                      <StatusBadge label="Connected" variant="success" size="sm" />
+                      {connState.latencyMs != null && (
+                        <span className="font-mono text-[10px] text-text-muted">{connState.latencyMs}ms</span>
+                      )}
+                      {discoverCached && (
+                        <span className="font-mono text-[10px] text-text-muted" title="Served from the short-lived server cache">cached</span>
+                      )}
+                    </div>
+                    {editingProvider && !formData.apiKey.trim() && discoveredModels === null && !discovering && (
+                      <button
+                        type="button"
+                        onClick={() => void loadFromSaved()}
+                        className="w-full rounded border border-border-secondary bg-bg-tertiary px-3 py-2 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+                      >
+                        Load models from saved configuration
+                      </button>
+                    )}
+                    {customModelMode ? (
+                      <div>
+                        <label className="block text-xs font-medium text-text-secondary mb-1" htmlFor="ai-model-manual">Model ID</label>
+                        <input
+                          id="ai-model-manual"
+                          type="text"
+                          value={formData.model}
+                          onChange={e => setFormData({ ...formData, model: e.target.value })}
+                          onKeyDown={e => { if (e.key === 'Enter' && formData.model.trim()) setModalStep('test'); }}
+                          placeholder={selectedKnown.defaultModel || 'e.g. gpt-4o-mini'}
+                          className="w-full rounded border border-border-primary bg-bg-primary px-2 py-1.5 font-mono text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                          autoFocus
+                        />
+                        {discoveredModels && discoveredModels.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setCustomModelMode(false)}
+                            className="mt-1 text-[11px] text-accent hover:underline"
+                          >
+                            Back to discovered models
+                          </button>
+                        )}
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            onClick={() => formData.model.trim() && setModalStep('test')}
+                            disabled={!formData.model.trim()}
+                            className="rounded border bg-accent px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
+                          >
+                            Continue →
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <ModelPicker
+                        models={discoveredModels}
+                        loading={discovering}
+                        error={discoverError}
+                        selectedId={formData.model}
+                        providerName={selectedKnown.name}
+                        refreshing={discovering}
+                        onSelect={selectModel}
+                        onRefresh={() => void runDiscovery(true)}
+                        onManualEntry={() => setCustomModelMode(true)}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* STEP: test model + save & activate */}
+                {modalStep === 'test' && selectedKnown && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setModalStep('models')} className="text-[11px] text-text-muted hover:text-text-primary">
+                        ← Models
+                      </button>
+                    </div>
+                    <div className="rounded border border-border-primary bg-bg-tertiary px-3 py-2.5">
+                      <p className="font-mono text-xs text-text-primary">{selectedKnown.name}</p>
+                      <p className="mt-0.5 truncate font-mono text-[11px] text-accent">{formData.model || '(no model selected)'}</p>
+                      {effectiveBaseUrl && (
+                        <p className="mt-0.5 truncate font-mono text-[10px] text-text-muted">{effectiveBaseUrl}</p>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-text-muted">
+                      Test Model sends a minimal probe request with the selected model. Test Connection (previous step) only verified credentials.
+                    </p>
+                    {modelTest.status === 'fail' && (
+                      <p role="alert" className="rounded border border-danger/25 bg-danger/[0.05] px-2.5 py-2 text-xs text-danger">
+                        Model test failed: {modelTest.error}
+                      </p>
+                    )}
+                    {modelTest.status === 'ok' && (
+                      <p role="status" className="rounded border border-success/25 bg-success/[0.05] px-2.5 py-2 text-xs text-success">
+                        ✓ Model responded successfully.
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void handleTestModel()}
+                        disabled={modelTest.status === 'testing' || saving || !formData.model}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded border border-border-secondary bg-bg-tertiary px-3 py-2 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-wait disabled:opacity-50"
+                      >
+                        {modelTest.status === 'testing' ? (
+                          <><LoaderCircle size={12} className="animate-spin" /> Testing model…</>
+                        ) : (
+                          <><Zap size={12} /> Test Model</>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => void handleSaveAndActivate()}
+                        disabled={saving || !formData.model}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded border bg-accent px-3 py-2 text-xs font-medium text-accent transition-colors hover:bg-accent/25 disabled:cursor-wait disabled:opacity-50"
+                      >
+                        {saving ? (
+                          <><LoaderCircle size={12} className="animate-spin" /> Saving…</>
+                        ) : (
+                          'Save & Activate'
+                        )}
+                      </button>
+                    </div>
+                    {formError && (
+                      <p role="alert" className="text-xs text-danger">{formError}</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    onClick={closeDialog}
                     disabled={saving}
                     className="rounded border border-border-secondary bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-bg-hover disabled:opacity-50"
                   >
                     Cancel
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="rounded border bg-accent px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
-                  >
-                    {saving ? (
-                      <>
-                        <LoaderCircle size={12} className="animate-spin mr-1" /> Saving…
-                      </>
-                    ) : (
-                      editingProvider ? 'Save Changes' : 'Add Provider'
-                    )}
                   </button>
                 </div>
               </div>
@@ -534,8 +914,12 @@ function AIProviderSection() {
                 <div key={k.id} className="flex items-center gap-1.5 p-2 bg-bg-secondary rounded">
                   <span className="font-mono text-text-primary">{k.name}</span>
                   <span className="text-text-muted">{k.description}</span>
-                  <span className="ml-auto font-mono text-text-muted">
-                    {k.supportsModelListing ? '📋 Models' : '⌨️ Manual'}
+                  <span className="ml-auto">
+                    {k.capabilities.modelDiscovery ? (
+                      <StatusBadge label="Live catalog" variant="info" size="sm" />
+                    ) : (
+                      <StatusBadge label="Manual" variant="neutral" size="sm" />
+                    )}
                   </span>
                 </div>
               ))}

@@ -399,8 +399,8 @@ class ApiClient {
   }
 
   // AI Provider settings
-  async getKnownProviders(): Promise<Array<{ id: string; name: string; description: string; supportsModelListing: boolean; defaultBaseUrl: string; defaultModel: string }>> {
-    return this.request<Array<{ id: string; name: string; description: string; supportsModelListing: boolean; defaultBaseUrl: string; defaultModel: string }>>('/api/ai-providers/known');
+  async getKnownProviders(): Promise<KnownProvider[]> {
+    return this.request<KnownProvider[]>('/api/ai-providers/known');
   }
 
   async getAiProviders(): Promise<Array<{ id: string; provider: string; model: string; baseUrl: string | null; isActive: boolean; createdAt: string; updatedAt: string }>> {
@@ -431,6 +431,27 @@ class ApiClient {
     });
   }
 
+  async discoverModels(data: { provider: string; apiKey: string | null; baseUrl?: string; refresh?: boolean }): Promise<DiscoverModelsResult> {
+    return this.request<DiscoverModelsResult>('/api/ai-providers/discover-models', {
+      method: 'POST',
+      body: data,
+    });
+  }
+
+  async refreshModels(provider: string, data?: { refresh?: boolean }): Promise<DiscoverModelsResult> {
+    return this.request<DiscoverModelsResult>(`/api/ai-providers/${provider}/refresh-models`, {
+      method: 'POST',
+      body: data ?? {},
+    });
+  }
+
+  async testConnection(data: { provider: string; apiKey: string | null; baseUrl?: string }): Promise<{ success: boolean; latencyMs: number; error: string | null }> {
+    return this.request<{ success: boolean; latencyMs: number; error: string | null }>('/api/ai-providers/test-connection', {
+      method: 'POST',
+      body: data,
+    });
+  }
+
   async setActiveAiProvider(provider: string): Promise<{ success: boolean }> {
     return this.request<{ success: boolean }>(`/api/ai-providers/${provider}/active`, {
       method: 'POST',
@@ -442,6 +463,39 @@ class ApiClient {
       method: 'DELETE',
     });
   }
+}
+
+/** Honest provider capability flags from GET /api/ai-providers/known. */
+export interface ProviderCapabilities {
+  modelDiscovery: boolean;
+  connectionTest: boolean;
+  structuredOutput: boolean;
+  streaming: boolean;
+}
+
+export interface KnownProvider {
+  id: string;
+  name: string;
+  description: string;
+  supportsModelListing: boolean;
+  protocol: string;
+  capabilities: ProviderCapabilities;
+  defaultBaseUrl: string;
+  defaultModel: string;
+}
+
+/** A normalized model catalog entry from model discovery. */
+export interface DiscoveredModel {
+  id: string;
+  displayName?: string;
+  provider: string;
+  contextWindow?: number;
+}
+
+export interface DiscoverModelsResult {
+  models: DiscoveredModel[];
+  error: string | null;
+  cached: boolean;
 }
 
 /** Safe user fields returned by GET /api/auth/session. No credentials. */

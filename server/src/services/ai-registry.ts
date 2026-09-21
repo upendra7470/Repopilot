@@ -10,14 +10,48 @@ import { getDb } from "../db/index.js";
 import { userAiProviders } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 
+/**
+ * Honest provider capability model (Phase 22).
+ * A capability is listed only when the adapter behavior actually supports
+ * it — never inferred per-model. Per-model capabilities (tools, vision,
+ * reasoning) are NOT claimed here because `/models` endpoints do not
+ * reliably report them.
+ */
+export interface ProviderCapabilities {
+  /** Live `/models` discovery via the adapter. */
+  modelDiscovery: boolean;
+  /** Credential validation without a full completion (see notes per adapter). */
+  connectionTest: boolean;
+  /** JSON structured-output reasoning via the shared system-prompt contract. */
+  structuredOutput: boolean;
+  /** Token streaming. No adapter implements streaming today. */
+  streaming: boolean;
+}
+
 export interface ProviderMetadata {
   id: string;
   name: string;
   description: string;
   supportsModelListing: boolean;
+  protocol: "openai-compatible" | "native-anthropic";
+  capabilities: ProviderCapabilities;
   defaultBaseUrl?: string;
   defaultModel?: string;
 }
+
+const OPENAI_COMPATIBLE: ProviderCapabilities = {
+  modelDiscovery: true,
+  connectionTest: true,
+  structuredOutput: true,
+  streaming: false,
+};
+
+const NO_DISCOVERY: ProviderCapabilities = {
+  modelDiscovery: false,
+  connectionTest: true,
+  structuredOutput: true,
+  streaming: false,
+};
 
 export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
   openai: {
@@ -25,6 +59,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "OpenAI",
     description: "OpenAI API (GPT-4, GPT-3.5, etc.)",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4o-mini",
   },
@@ -33,6 +69,10 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Anthropic",
     description: "Anthropic API (Claude models) - native protocol",
     supportsModelListing: false,
+    protocol: "native-anthropic",
+    // No list-models endpoint exists; validation falls back to a minimal
+    // probe completion, so connectionTest stays honest but costly.
+    capabilities: NO_DISCOVERY,
     defaultBaseUrl: "https://api.anthropic.com/v1",
     defaultModel: "claude-3-5-sonnet-latest",
   },
@@ -41,6 +81,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Mistral",
     description: "Mistral AI API - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://api.mistral.ai/v1",
     defaultModel: "mistral-large-latest",
   },
@@ -49,6 +91,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Groq",
     description: "Groq API - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://api.groq.com/openai/v1",
     defaultModel: "llama-3.1-70b-versatile",
   },
@@ -57,6 +101,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Together AI",
     description: "Together AI - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://api.together.xyz/v1",
     defaultModel: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
   },
@@ -65,6 +111,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Fireworks AI",
     description: "Fireworks AI - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://api.fireworks.ai/inference/v1",
     defaultModel: "accounts/fireworks/models/llama-v3p1-70b-instruct",
   },
@@ -73,6 +121,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Cerebras",
     description: "Cerebras Inference - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://api.cerebras.ai/v1",
     defaultModel: "llama3.1-70b",
   },
@@ -81,6 +131,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "OpenRouter",
     description: "OpenRouter - OpenAI-compatible gateway",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "https://openrouter.ai/api/v1",
     defaultModel: "openrouter/auto",
   },
@@ -89,6 +141,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Ollama (Local)",
     description: "Local Ollama server - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "http://localhost:11434/v1",
     defaultModel: "llama3.1",
   },
@@ -97,6 +151,8 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "LM Studio (Local)",
     description: "Local LM Studio server - OpenAI-compatible",
     supportsModelListing: true,
+    protocol: "openai-compatible",
+    capabilities: OPENAI_COMPATIBLE,
     defaultBaseUrl: "http://localhost:1234/v1",
     defaultModel: "default",
   },
@@ -105,6 +161,10 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
     name: "Custom OpenAI-Compatible",
     description: "Any OpenAI-compatible endpoint",
     supportsModelListing: false,
+    protocol: "openai-compatible",
+    // Discovery is attempted opportunistically (many self-hosted endpoints
+    // expose /models) but not advertised, so the UI leads with manual entry.
+    capabilities: NO_DISCOVERY,
     defaultBaseUrl: "",
     defaultModel: "",
   },
@@ -450,6 +510,8 @@ export async function resolveAiConfig(userId?: string): Promise<AiConfig | null>
 
 /**
  * Encrypt and store a user's AI provider configuration.
+ * A null apiKey means "keep any existing stored key" (used by edit flows
+ * that only change the model); a string (even empty) replaces it.
  */
 export async function saveUserAiProvider(
   userId: string,
@@ -464,6 +526,14 @@ export async function saveUserAiProvider(
   }
 
   const db = getDb();
+  const keyColumns =
+    apiKey === null
+      ? {}
+      : {
+          apiKeyEncrypted: encrypted?.ciphertext ?? null,
+          apiKeyIv: encrypted?.iv ?? null,
+          apiKeyTag: encrypted?.tag ?? null,
+        };
   await db
     .insert(userAiProviders)
     .values({
@@ -481,9 +551,7 @@ export async function saveUserAiProvider(
       set: {
         model,
         baseUrl,
-        apiKeyEncrypted: encrypted?.ciphertext ?? null,
-        apiKeyIv: encrypted?.iv ?? null,
-        apiKeyTag: encrypted?.tag ?? null,
+        ...keyColumns,
         updatedAt: new Date(),
       },
     });
@@ -535,6 +603,260 @@ export async function deleteUserAiProvider(userId: string, provider: string): Pr
   await db
     .delete(userAiProviders)
     .where(and(eq(userAiProviders.userId, userId), eq(userAiProviders.provider, provider)));
+}
+
+/**
+ * Normalized model catalog entry (Phase 22).
+ * Only fields actually present in the provider response are populated —
+ * absent fields are omitted, never fabricated. Per-model capabilities
+ * (tools/vision/reasoning) are intentionally NOT inferred: `/models`
+ * endpoints do not reliably report them.
+ */
+export interface DiscoveredModel {
+  id: string;
+  displayName?: string;
+  provider: string;
+  contextWindow?: number;
+}
+
+export interface DiscoverModelsResult {
+  models: DiscoveredModel[];
+  /** Human-readable failure reason when models is empty (null on success). */
+  error: string | null;
+  /** True when served from the short-lived server-side cache. */
+  cached: boolean;
+}
+
+const MAX_DISCOVERED_MODELS = 200;
+const MAX_MODEL_ID_CHARS = 200;
+const DISCOVER_TIMEOUT_MS = 15_000;
+
+interface RawModelEntry {
+  id?: unknown;
+  name?: unknown;
+  context_window?: unknown;
+  context_length?: unknown;
+  max_context_length?: unknown;
+}
+
+function sanitizeModelId(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const id = raw.trim();
+  if (!id || id.length > MAX_MODEL_ID_CHARS) return null;
+  // Model IDs are path-safe tokens; reject control characters.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(id)) return null;
+  return id;
+}
+
+function sanitizeContextWindow(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.min(Math.floor(value), 10_000_000);
+}
+
+/**
+ * Short-lived server-side model catalog cache (Phase 22, Step 14).
+ * Keyed by user + provider + base URL so one user's catalog can never
+ * leak into another user's session. Stores normalized models only —
+ * never credentials. TTL is intentionally short (5 minutes).
+ */
+const DISCOVERY_CACHE_TTL_MS = 5 * 60_000;
+const discoveryCache = new Map<string, { at: number; result: DiscoverModelsResult }>();
+
+function discoveryCacheKey(userId: string, provider: string, baseUrl: string): string {
+  return `${userId}:${provider}:${baseUrl.replace(/\/$/, "")}`;
+}
+
+/** Test-only hook to reset the discovery cache between tests. */
+export function clearDiscoveryCache(): void {
+  discoveryCache.clear();
+}
+
+/**
+ * Discover available models for a provider by querying its OpenAI-compatible
+ * `/models` endpoint. Never throws: transport, auth, and rate-limit
+ * failures are reported via the `error` field so callers can render
+ * graceful UI states. Anthropic exposes no list-models endpoint and
+ * yields an empty result with an explanatory error.
+ *
+ * Pass `userId` to enable the short-lived per-user cache; pass
+ * `refresh: true` to bypass it. The cache never stores credentials.
+ */
+export async function discoverModels(config: {
+  provider: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+  userId?: string;
+  refresh?: boolean;
+}): Promise<DiscoverModelsResult> {
+  const logger = getLogger();
+  const metadata = KNOWN_PROVIDERS[config.provider];
+  if (!metadata) {
+    return { models: [], error: "Unknown provider", cached: false };
+  }
+
+  const baseUrl = (config.baseUrl ?? "").trim() || metadata.defaultBaseUrl || "";
+  if (!baseUrl) {
+    return { models: [], error: "A base URL is required for this provider", cached: false };
+  }
+  try {
+    new URL(baseUrl);
+  } catch {
+    return { models: [], error: "Invalid base URL", cached: false };
+  }
+
+  if (config.provider === "anthropic") {
+    return { models: [], error: "Anthropic exposes no model-listing endpoint; enter the model ID manually", cached: false };
+  }
+
+  const cacheKey = config.userId ? discoveryCacheKey(config.userId, config.provider, baseUrl) : null;
+  if (cacheKey && !config.refresh) {
+    const hit = discoveryCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < DISCOVERY_CACHE_TTL_MS) {
+      return { ...hit.result, cached: true };
+    }
+    if (hit) discoveryCache.delete(cacheKey);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DISCOVER_TIMEOUT_MS);
+  try {
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl.replace(/\/$/, "")}/models`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: {
+          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        },
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return { models: [], error: "Request timed out", cached: false };
+      }
+      logger.warn({ provider: config.provider }, "Model discovery unreachable");
+      return { models: [], error: "Provider unreachable", cached: false };
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      return { models: [], error: "Invalid API key", cached: false };
+    }
+    if (res.status === 429) {
+      return { models: [], error: "Rate limited — try again shortly", cached: false };
+    }
+    if (!res.ok) {
+      return { models: [], error: `Provider returned status ${res.status}`, cached: false };
+    }
+
+    const data = (await res.json().catch(() => null)) as {
+      data?: RawModelEntry[];
+    } | null;
+    const entries = Array.isArray(data?.data) ? data.data : [];
+    const seen = new Set<string>();
+    const models: DiscoveredModel[] = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const id = sanitizeModelId(entry.id);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const model: DiscoveredModel = { id, provider: config.provider };
+      if (typeof entry.name === "string" && entry.name.trim()) {
+        model.displayName = entry.name.trim().slice(0, MAX_MODEL_ID_CHARS);
+      }
+      const contextWindow = sanitizeContextWindow(
+        entry.context_window ?? entry.context_length ?? entry.max_context_length,
+      );
+      if (contextWindow !== undefined) {
+        model.contextWindow = contextWindow;
+      }
+      models.push(model);
+      if (models.length >= MAX_DISCOVERED_MODELS) break;
+    }
+    models.sort((a, b) => a.id.localeCompare(b.id));
+    const result: DiscoverModelsResult = { models, error: null, cached: false };
+    if (cacheKey) {
+      discoveryCache.set(cacheKey, { at: Date.now(), result });
+    }
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Test Connection (Phase 22, Step 10): can RepoPilot authenticate with the
+ * provider? Validates credentials only — no model completion is attempted,
+ * so this never spends model tokens. (Anthropic is the honest exception:
+ * its native API exposes no credential-check endpoint, so validation uses
+ * a minimal 10-token probe completion.)
+ */
+export async function testConnection(config: {
+  provider: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}): Promise<{ success: boolean; error?: string; latencyMs: number }> {
+  const started = Date.now();
+  const metadata = KNOWN_PROVIDERS[config.provider];
+  if (!metadata) {
+    return { success: false, error: "Unknown provider", latencyMs: Date.now() - started };
+  }
+  const baseUrl = (config.baseUrl ?? "").trim() || metadata.defaultBaseUrl || "";
+  if (!baseUrl) {
+    return { success: false, error: "A base URL is required for this provider", latencyMs: Date.now() - started };
+  }
+  let adapter: ProviderAdapter;
+  try {
+    adapter = createAdapter({ provider: config.provider, model: "", baseUrl, apiKey: config.apiKey ?? null });
+  } catch {
+    return { success: false, error: "Unknown provider", latencyMs: Date.now() - started };
+  }
+  const validation = await adapter.validateCredentials({ baseUrl, apiKey: config.apiKey ?? null });
+  if (!validation.valid) {
+    return { success: false, error: validation.error ?? "Connection failed", latencyMs: Date.now() - started };
+  }
+  return { success: true, latencyMs: Date.now() - started };
+}
+
+/**
+ * Discover models using a user's SAVED configuration (Phase 22, Step 4).
+ * Credentials are decrypted server-side only and never leave the server.
+ * Returns null when the user has no such provider configured.
+ */
+export async function discoverModelsWithSavedCredentials(
+  userId: string,
+  provider: string,
+  opts?: { refresh?: boolean },
+): Promise<DiscoverModelsResult | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(userAiProviders)
+    .where(and(eq(userAiProviders.userId, userId), eq(userAiProviders.provider, provider)))
+    .limit(1);
+  const record = rows[0];
+  if (!record) return null;
+
+  let apiKey: string | null = null;
+  if (record.apiKeyEncrypted) {
+    try {
+      apiKey = decryptSecret({
+        ciphertext: record.apiKeyEncrypted,
+        iv: record.apiKeyIv!,
+        tag: record.apiKeyTag!,
+      });
+    } catch {
+      return { models: [], error: "Stored credentials could not be decrypted; re-enter the API key", cached: false };
+    }
+  }
+  return discoverModels({
+    provider,
+    baseUrl: record.baseUrl,
+    apiKey,
+    userId,
+    refresh: opts?.refresh,
+  });
 }
 
 /**

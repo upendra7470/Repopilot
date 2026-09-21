@@ -299,7 +299,7 @@ export function RiskPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-text-primary">Risks</h1>
+        <h1 className="text-lg font-semibold tracking-tight text-text-primary">Risks</h1>
         <p className="mt-1 text-sm text-text-secondary">
           Deterministic signals computed from synced repository data — every
           finding cites its evidence.

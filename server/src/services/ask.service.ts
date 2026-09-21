@@ -675,7 +675,12 @@ export async function retrieveEvidence(
       "incident", incident.fingerprint, incident.burstEndAt,
     ));
     for (const entry of incident.timeline.slice(0, 15)) {
-      const id = `${entry.ref.kind}:${entry.ref.value}`;
+      // Canonical commit IDs are 12-char prefixes everywhere else in Ask
+      // retrieval: normalize here so the same commit cannot appear twice
+      // under a short and a full-length ID (inflated counts, split citations).
+      const canonicalValue =
+        entry.ref.kind === "commit" ? entry.ref.value.slice(0, 12) : entry.ref.value;
+      const id = `${entry.ref.kind}:${canonicalValue}`;
       push(makeEvidence(
         id, entry.ref.kind, entry.title,
         entry.detail ?? "", entry.ref.kind, entry.ref.value, entry.at,

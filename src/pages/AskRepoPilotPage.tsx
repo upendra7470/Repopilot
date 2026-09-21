@@ -63,6 +63,24 @@ const SUGGESTED_QUESTIONS = [
 
 const MAX_QUESTION_LENGTH = 500;
 
+/** Human-readable provider failure messages. Never exposes raw API errors. */
+function humanizeAiError(code: string | undefined): string {
+  switch (code) {
+    case 'AI_INVALID_KEY':
+      return 'Your AI provider rejected the request (invalid credentials).';
+    case 'AI_RATE_LIMITED':
+      return 'The AI provider is rate limited. Try again shortly.';
+    case 'AI_TIMEOUT':
+      return 'The provider took too long to respond.';
+    case 'AI_BAD_RESPONSE':
+      return 'The selected model is unavailable or returned an unusable response.';
+    case 'AI_EMPTY_RESPONSE':
+      return 'The selected model returned an empty response.';
+    default:
+      return 'AI analysis unavailable.';
+  }
+}
+
 function entityHref(repositoryId: string, entityType: string, entityId: string): string | null {
   switch (entityType) {
     case 'commit':
@@ -194,11 +212,11 @@ function FindingItem({
   finding: AskResponse['keyFindings'][0];
 }) {
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex flex-wrap items-start gap-x-2 gap-y-0.5">
       <span className="text-text-secondary" aria-hidden="true">•</span>
-      <span className="flex-1 min-w-0 text-text-primary">{finding.text}</span>
+      <span className="min-w-0 flex-1 basis-0 text-text-primary">{finding.text}</span>
       {finding.evidenceIds.length > 0 && (
-        <span className="flex-shrink-0 ml-2 font-mono text-[11px] text-text-muted">
+        <span className="ml-auto font-mono text-[11px] text-text-muted break-all">
           Evidence: {finding.evidenceIds.slice(0, 4).join(', ')}
           {finding.evidenceIds.length > 4 && ` +${finding.evidenceIds.length - 4} more`}
         </span>
@@ -215,18 +233,22 @@ function EvidenceItem({
   repositoryId: string;
 }) {
   const href = evidenceHref(repositoryId, item);
+  // Long labels/details truncate instead of overflowing the row (Steps 17-20).
   const content = (
     <>
-      <span className="font-mono text-[11px] text-accent">{item.id}</span>
-      <span className="text-text-muted"> · </span>
-      <span className="font-medium text-text-primary">{item.label}</span>
-      <span className="text-text-muted"> — </span>
-      <span className="text-text-secondary">{item.detail}</span>
-      {item.at && (
+      <span className="shrink-0 font-mono text-[11px] text-accent">{item.id}</span>
+      <span className="shrink-0 text-text-muted"> · </span>
+      <span className="min-w-0 flex-1 truncate font-medium text-text-primary" title={item.label}>{item.label}</span>
+      {item.detail && (
         <>
-          <span className="text-text-muted"> @ </span>
-          <span className="font-mono text-[11px] text-text-muted">{new Date(item.at).toLocaleString()}</span>
+          <span className="shrink-0 text-text-muted"> — </span>
+          <span className="hidden min-w-0 flex-[2] truncate text-text-secondary sm:inline" title={item.detail}>{item.detail}</span>
         </>
+      )}
+      {item.at && (
+        <span className="hidden shrink-0 font-mono text-[11px] text-text-muted md:inline">
+          {' '}@ {new Date(item.at).toLocaleString()}
+        </span>
       )}
     </>
   );
@@ -234,7 +256,7 @@ function EvidenceItem({
   return (
     <div className="flex items-center gap-1.5 px-2 py-1.5 border-y border-border-primary">
       {href ? (
-        <Link to={href} className="flex min-w-0 flex-1 items-center gap-1.5 hover:underline">
+        <Link to={href} title={`${item.label} — ${item.detail}`} className="flex min-w-0 flex-1 items-center gap-1.5 hover:underline">
           {content}
         </Link>
       ) : (
@@ -471,7 +493,7 @@ export function AskRepoPilotPage() {
                 placeholder="Why has CI been unstable recently?"
                 rows={3}
                 className={clsx(
-                  'w-full rounded border bg-bg-primary px-3 py-2 text-text-primary placeholder-text-muted transition-colors',
+                  'w-full rounded border bg-bg-primary px-3 py-2 text-text-primary placeholder:text-text-muted transition-colors',
                   'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40',
                   'disabled:cursor-wait disabled:opacity-50',
                   error && 'border-danger/40',
@@ -573,7 +595,11 @@ export function AskRepoPilotPage() {
               </div>
               {!response.ai.available && (
                 <div className="mt-2 p-2 bg-bg-tertiary border border-border-primary rounded text-xs text-text-secondary">
-                  AI analysis unavailable. <Link to="/settings?section=ai" className="text-accent hover:underline">Configure an AI provider</Link> to enable AI-enhanced investigations. The deterministic evidence and agent trace below remain fully usable.
+                  {response.ai.error?.code === 'AI_UNAVAILABLE' && !response.ai.provider ? (
+                    <>AI analysis unavailable. <Link to="/settings?section=ai" className="text-accent hover:underline">Configure an AI provider</Link> to enable AI-enhanced investigations.</>
+                  ) : (
+                    <>{humanizeAiError(response.ai.error?.code)} The deterministic evidence and agent trace below remain fully usable.</>
+                  )}
                 </div>
               )}
             </Panel>
@@ -653,6 +679,15 @@ export function AskRepoPilotPage() {
                 )}
               </div>
             </Panel>
+          </div>
+        )}
+
+        {working && !response && (
+          <div role="status" aria-label="Investigating">
+            <LoadingState type="dashboard" />
+            <p className="mt-2 text-center font-mono text-[11px] text-text-muted">
+              Running deterministic tools, then reasoning over the evidence…
+            </p>
           </div>
         )}
 

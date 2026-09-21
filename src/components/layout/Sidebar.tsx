@@ -66,7 +66,7 @@ const sections: NavSection[] = [
       { id: 'timeline', label: 'Timeline', icon: Clock, status: 'active' },
       { id: 'contributors', label: 'Contributors', icon: Users, status: 'active' },
       { id: 'components', label: 'Components', icon: Boxes, status: 'soon' },
-      { id: 'knowledge-graph', label: 'Knowledge Graph', icon: BrainCircuit, status: 'soon' },
+      { id: 'knowledge-graph', label: 'Knowledge Graph', icon: BrainCircuit, status: 'active' },
     ],
   },
 {

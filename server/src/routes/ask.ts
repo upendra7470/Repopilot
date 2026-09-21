@@ -303,6 +303,7 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
         history ?? [],
         aiConfig ?? undefined,
         investigationContext,
+        deterministic,
       );
 
       const merged = mergeDeterministicWithAi(deterministic, aiResult.analysis ?? { aiUnavailable: true });

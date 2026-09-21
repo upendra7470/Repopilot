@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   ciRuns,
@@ -306,6 +306,7 @@ async function getFileRefs(repositoryId: string, paths: string[]): Promise<FileR
           .from(issueCommitLinks)
           .innerJoin(commits, eq(issueCommitLinks.commitId, commits.id))
           .innerJoin(commitFiles, eq(commitFiles.commitId, commits.id))
+          .innerJoin(issues, eq(issueCommitLinks.issueId, issues.id))
           .where(and(eq(issueCommitLinks.repositoryId, repositoryId), eq(commitFiles.path, path))),
         db
           .select({ login: commits.authorLogin })
@@ -628,24 +629,29 @@ export async function buildInvestigationContext(
       if (commitRefs.length === 0) break;
       const commit = commitRefs[0];
 
+      // Link tables key commits by UUID (commits.id) — resolve via a join
+      // on the SHA, never by comparing the UUID column to the SHA string.
       const fileRows = await getDb()
         .select({ path: commitFiles.path })
         .from(commitFiles)
-        .where(and(eq(commitFiles.repositoryId, repositoryId), eq(commitFiles.commitId, commit.sha)));
+        .innerJoin(commits, eq(commitFiles.commitId, commits.id))
+        .where(and(eq(commitFiles.repositoryId, repositoryId), eq(commits.sha, commit.sha)));
       const filePaths = [...new Set(fileRows.map((f) => f.path))];
 
       const prRows = await getDb()
         .select({ number: pullRequests.number })
         .from(prCommits)
         .innerJoin(pullRequests, eq(prCommits.pullRequestId, pullRequests.id))
-        .where(and(eq(pullRequests.repositoryId, repositoryId), eq(prCommits.commitId, commit.sha)));
+        .innerJoin(commits, eq(prCommits.commitId, commits.id))
+        .where(and(eq(pullRequests.repositoryId, repositoryId), eq(commits.sha, commit.sha)));
       const prNumbers = [...new Set(prRows.map((p) => p.number))];
 
       const issueRows = await getDb()
         .select({ number: issues.number })
         .from(issueCommitLinks)
         .innerJoin(issues, eq(issueCommitLinks.issueId, issues.id))
-        .where(and(eq(issues.repositoryId, repositoryId), eq(issueCommitLinks.commitId, commit.sha)));
+        .innerJoin(commits, eq(issueCommitLinks.commitId, commits.id))
+        .where(and(eq(issues.repositoryId, repositoryId), eq(commits.sha, commit.sha)));
       const issueNumbers = [...new Set(issueRows.map((i) => i.number))];
 
       const runRows = await getDb()
@@ -680,7 +686,13 @@ export async function buildInvestigationContext(
       if (fileRefs.length === 0) break;
       const file = fileRefs[0];
 
-      const commitShas = file.linkedCommits.map((s) => s.length === 12 ? findFullSha(repositoryId, s) : s).filter((s): s is string => !!s);
+      // findFullSha is async: resolve every prefix before filtering, or the
+      // array holds Promise objects that match nothing downstream.
+      const commitShas = (
+        await Promise.all(
+          file.linkedCommits.map((s) => (s.length === 12 ? findFullSha(repositoryId, s) : s)),
+        )
+      ).filter((s): s is string => !!s);
       const prNumbers = file.linkedPrs;
       const issueNumbers = file.linkedIssues;
 
@@ -727,7 +739,11 @@ export async function buildInvestigationContext(
       if (prRefs.length === 0) break;
       const pr = prRefs[0];
 
-      const commitShas = pr.commits.map((s) => s.length === 12 ? findFullSha(repositoryId, s) : s).filter((s): s is string => !!s);
+      const commitShas = (
+        await Promise.all(
+          pr.commits.map((s) => (s.length === 12 ? findFullSha(repositoryId, s) : s)),
+        )
+      ).filter((s): s is string => !!s);
       const filePaths = pr.files;
       const issueNumbers = await getLinkedIssueNumbersForPr(repositoryId, pr.id);
 
@@ -775,7 +791,11 @@ export async function buildInvestigationContext(
       if (issueRefs.length === 0) break;
       const issue = issueRefs[0];
 
-      const commitShas = issue.linkedCommits.map((s) => s.length === 12 ? findFullSha(repositoryId, s) : s).filter((s): s is string => !!s);
+      const commitShas = (
+        await Promise.all(
+          issue.linkedCommits.map((s) => (s.length === 12 ? findFullSha(repositoryId, s) : s)),
+        )
+      ).filter((s): s is string => !!s);
       const filePaths = issue.files;
 
       const [commits, files, prs, runs] = await Promise.all([
@@ -1232,10 +1252,13 @@ function buildUnknowns(target: InvestigationTarget, direct: DirectRelationships)
 
 async function findFullSha(repositoryId: string, shortSha: string): Promise<string | null> {
   const db = getDb();
+  // Prefix match only: the wildcard stays inside the bound parameter so the
+  // short SHA can never break out of the LIKE pattern.
+  if (!/^[0-9a-f]{7,39}$/i.test(shortSha)) return null;
   const row = await db
     .select({ sha: commits.sha })
     .from(commits)
-    .where(and(eq(commits.repositoryId, repositoryId), sql`${commits.sha} LIKE ${shortSha}%`))
+    .where(and(eq(commits.repositoryId, repositoryId), like(commits.sha, `${shortSha.toLowerCase()}%`)))
     .limit(1);
   return row[0]?.sha ?? null;
 }

@@ -7,6 +7,7 @@ import { getDb } from "../../db/index.js";
 import { askAnalyses } from "../../db/schema.js";
 import { handleGithubIdentity } from "../github-auth.service.js";
 import { createRepository, linkUserRepository } from "../repository.service.js";
+import { saveUserAiProvider, setActiveAiProvider, resolveAiConfig } from "../ai-registry.js";
 
 function setupEnv(overrides: Record<string, string | undefined> = {}): void {
   resetEnv();
@@ -569,5 +570,130 @@ describe("Ask RepoPilot Service Integration", () => {
     const repoId = await seededRepo();
     const deterministic = await answerQuestion(repoId, "What is PR #42?", []);
     expect(deterministic.entities.some((e) => e.kind === "pr" && e.value === "42")).toBe(true);
+  });
+});
+
+describe("Ask RepoPilot Active Provider & Model", () => {
+  beforeEach(() => {
+    setupEnv({ AI_API_KEY: "sk-test" });
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    setupEnv();
+    const db = getDb();
+    await db.delete(askAnalyses);
+  });
+
+  async function userWithActiveProvider(provider: string, model: string, apiKey: string) {
+    const suffix = uniqueSuffix();
+    const login = await handleGithubIdentity(
+      {
+        githubId: `gh-model-${suffix}`,
+        login: `modeluser-${suffix}`,
+        name: "Model User",
+        email: `model-${suffix}@example.com`,
+        avatarUrl: "https://example.com/avatar.png",
+      },
+      { accessToken: `test-only-token-${suffix}`, scope: "read:user user:email" },
+    );
+    await saveUserAiProvider(login.user.id, provider, model, "https://api.openai.com/v1", apiKey);
+    await setActiveAiProvider(login.user.id, provider);
+    return login.user.id;
+  }
+
+  function lastRequestBody(fetchMock: ReturnType<typeof vi.fn>) {
+    const [, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    return { body: JSON.parse(String(init?.body)), headers };
+  }
+
+  it("sends the user's active provider model and key — not env defaults", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse(VALID_AI_RESPONSE));
+    vi.stubGlobal("fetch", fetchMock);
+    const db = getDb();
+    await db.delete(askAnalyses);
+
+    const repoId = await seededRepo();
+    const userId = await userWithActiveProvider("openai", "gpt-4o-user-model", "sk-user-key");
+    const aiConfig = await resolveAiConfig(userId);
+    expect(aiConfig).toMatchObject({ provider: "openai", model: "gpt-4o-user-model" });
+
+    await requestAskAnalysis(repoId, "Why is CI unstable?", undefined, [], aiConfig);
+    const { body, headers } = lastRequestBody(fetchMock);
+    expect(body.model).toBe("gpt-4o-user-model");
+    expect(headers.Authorization).toBe("Bearer sk-user-key");
+  });
+
+  it("does not reuse a cached answer after switching models", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse(VALID_AI_RESPONSE));
+    vi.stubGlobal("fetch", fetchMock);
+    const db = getDb();
+    await db.delete(askAnalyses);
+
+    const repoId = await seededRepo();
+    const userId = await userWithActiveProvider("openai", "model-a", "sk-a");
+    const configA = await resolveAiConfig(userId);
+    await requestAskAnalysis(repoId, "Why is CI unstable?", undefined, [], configA);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Same question, same repo — but a different model must miss the cache.
+    await saveUserAiProvider(userId, "openai", "model-b", "https://api.openai.com/v1", "sk-a");
+    const configB = await resolveAiConfig(userId);
+    expect(configB?.model).toBe("model-b");
+    await requestAskAnalysis(repoId, "Why is CI unstable?", undefined, [], configB);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(lastRequestBody(fetchMock).body.model).toBe("model-b");
+  });
+
+  it("rejects fabricated and foreign evidence IDs from model output", async () => {
+    const fabricated = {
+      ...VALID_AI_RESPONSE,
+      keyFindings: [
+        { text: "Real failure", evidenceIds: ["run:1"] },
+        { text: "Invented failure", evidenceIds: ["commit:fake123", "run:from-another-repo"] },
+      ],
+      evidence: [
+        { id: "run:1", explanation: "Failed CI run" },
+        { id: "commit:fake123", explanation: "Invented commit" },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse(fabricated));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const deterministic = buildMockDeterministic();
+    const result = await analyzeWithAi(deterministic, []);
+    expect(result).not.toEqual({ aiUnavailable: true });
+    if ("aiUnavailable" in result) throw new Error("expected AI analysis");
+    const allIds = [
+      ...result.keyFindings.flatMap((f) => f.evidenceIds),
+      ...result.evidence.map((e) => e.id),
+    ];
+    expect(allIds).not.toContain("commit:fake123");
+    expect(allIds).not.toContain("run:from-another-repo");
+    expect(allIds).toContain("run:1");
+  });
+
+  it("rejects schema-invalid model output instead of casting it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse({ answer: 42, nonsense: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await analyzeWithAi(buildMockDeterministic(), []);
+    expect(result).toEqual({ aiUnavailable: true });
+  });
+
+  it("never resolves history evidence from another repository", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse(VALID_AI_RESPONSE));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const deterministic = buildMockDeterministic();
+    await analyzeWithAi(deterministic, [
+      { question: "Earlier question in repo B", evidenceIds: ["pr:999", "run:foreign"] },
+    ]);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const userPrompt = JSON.parse(String(init?.body)).messages[1].content as string;
+    expect(userPrompt).toContain("Previous Evidence: none");
+    expect(userPrompt).not.toContain("pr:999");
   });
 });

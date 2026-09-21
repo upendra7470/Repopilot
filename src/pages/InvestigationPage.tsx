@@ -163,7 +163,7 @@ function RelationshipItem({
         {items.slice(0, 20).map((item) => (
           <div key={item.id} className="flex items-center gap-2 p-2 bg-bg-tertiary rounded">
             <NodeBadge type={kind} label={NODE_TYPE_LABELS[kind] ?? kind} />
-            <span className="font-mono text-[11px] text-text-primary truncate max-w-[300px]">{item.label}</span>
+            <span className="font-mono text-[11px] text-text-primary truncate max-w-[300px]" title={item.label}>{item.label}</span>
           </div>
         ))}
         {items.length > 20 && (
