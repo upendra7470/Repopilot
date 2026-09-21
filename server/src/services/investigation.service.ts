@@ -18,9 +18,45 @@ import { analyzeRepositoryRisks } from "./risk.service.js";
 import { detectIncidents } from "./incident-intelligence.service.js";
 import { getLogger } from "../utils/logger.js";
 
+export type InvestigationEntityType =
+  | "commit"
+  | "file"
+  | "pr"
+  | "issue"
+  | "run"
+  | "workflow"
+  | "incident"
+  | "risk";
+
 export interface InvestigationTarget {
-  type: "commit" | "file" | "pr" | "issue" | "run" | "workflow" | "incident" | "risk";
+  type: InvestigationEntityType;
   identifier: string;
+}
+
+/**
+ * Normalize graph/API entity types (pull_request, ci_run, ci_workflow)
+ * to canonical investigation types (pr, run, workflow). Pass-through for
+ * already-canonical values. Returns null for unsupported types.
+ */
+export function normalizeInvestigationType(
+  rawType: string,
+): InvestigationEntityType | null {
+  const map: Record<string, InvestigationEntityType> = {
+    commit: "commit",
+    file: "file",
+    pr: "pr",
+    pull_request: "pr",
+    issue: "issue",
+    run: "run",
+    ci_run: "run",
+    ciRun: "run",
+    workflow: "workflow",
+    ci_workflow: "workflow",
+    ciWorkflow: "workflow",
+    incident: "incident",
+    risk: "risk",
+  };
+  return map[rawType] ?? null;
 }
 
 export interface InvestigationContext {
@@ -556,13 +592,23 @@ async function getContributorRefs(repositoryId: string, logins: string[]): Promi
  * Build an investigation context for a target entity.
  * This assembles all deterministically derivable relationships from the
  * synchronized repository data. No inference, no LLM.
+ * Accepts both canonical (pr/run/workflow) and graph (pull_request/ci_run/ci_workflow) type names.
  */
 export async function buildInvestigationContext(
   repositoryId: string,
-  target: InvestigationTarget,
+  rawTarget: InvestigationTarget | { type: string; identifier: string },
 ): Promise<InvestigationContext> {
   const logger = getLogger();
   const started = Date.now();
+
+  const normalizedType = normalizeInvestigationType(rawTarget.type);
+  if (!normalizedType) {
+    throw new Error(`Unsupported investigation entity type: ${rawTarget.type}`);
+  }
+  const target: InvestigationTarget = {
+    type: normalizedType,
+    identifier: rawTarget.identifier,
+  };
 
   let direct: DirectRelationships = {
     commits: [],

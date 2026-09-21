@@ -5,9 +5,12 @@ import {
   Copy,
   HelpCircle,
   Sparkles,
+  Terminal,
+  ChevronDown,
+  ShieldAlert,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { api, ApiError, type AskResponse, type ConnectedRepo } from '../lib/api/client';
+import { api, ApiError, type AgentTrace, type AskResponse, type ConnectedRepo } from '../lib/api/client';
 import { RepoContextHeader } from '../components/repo/RepoContextHeader';
 import { Panel } from '../components/ui/Panel';
 import { LoadingState } from '../components/ui/LoadingState';
@@ -87,6 +90,102 @@ function entityHref(repositoryId: string, entityType: string, entityId: string):
 
 function evidenceHref(repositoryId: string, item: AskResponse['evidence'][0]): string | null {
   return entityHref(repositoryId, item.entityType, item.entityId);
+}
+
+const AGENT_TOOL_LABELS: Record<string, string> = {
+  investigate_entity: 'Investigating entity',
+  query_knowledge_graph: 'Searching knowledge graph',
+  get_file_context: 'Reading file context',
+  get_ci_timeline: 'Checking CI timeline',
+  check_risk_patterns: 'Checking risk patterns',
+};
+
+function AgentTracePanel({ agent }: { agent: AgentTrace }) {
+  const [open, setOpen] = useState(true);
+  if (!agent.steps || agent.steps.length === 0) {
+    return null;
+  }
+  const totalMs = agent.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+  return (
+    <Panel
+      title="Agent Activity"
+      subtitle={`${agent.steps.length} tool steps · ${totalMs}ms · deterministic observations`}
+    >
+      <div className="rounded border border-border-primary bg-bg-primary font-mono text-[11px]">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-text-secondary hover:text-text-primary"
+          aria-expanded={open}
+        >
+          <Terminal size={12} className="text-accent" />
+          <span className="flex-1 truncate">
+            {agent.mode === 'agentic' ? 'Autonomous investigation trace' : `Trace (${agent.mode})`}
+          </span>
+          <ChevronDown size={12} className={clsx('transition-transform', !open && '-rotate-90')} />
+        </button>
+        {open && (
+          <div className="border-t border-border-primary divide-y divide-border-primary/50">
+            {agent.steps.map((s) => (
+              <details key={s.step} className="px-2 py-1.5">
+                <summary className="cursor-pointer list-none">
+                  <span className="text-accent">› </span>
+                  <span className="text-text-primary">{AGENT_TOOL_LABELS[s.tool] ?? s.tool}…</span>
+                  <span className="text-text-muted">
+                    {' '}· {s.durationMs}ms · {s.evidenceIds.length} evidence
+                  </span>
+                </summary>
+                <div className="mt-1 pl-3 text-text-secondary">
+                  <p className="italic">{s.thought}</p>
+                  <p className="mt-0.5">{s.summary}</p>
+                  {s.evidenceIds.length > 0 && (
+                    <p className="mt-0.5 truncate text-text-muted">
+                      evidence: {s.evidenceIds.slice(0, 8).join(', ')}
+                      {s.evidenceIds.length > 8 && ` +${s.evidenceIds.length - 8} more`}
+                    </p>
+                  )}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function EvidenceChips({
+  evidence,
+  repositoryId,
+}: {
+  evidence: AskResponse['evidence'];
+  repositoryId: string;
+}) {
+  if (evidence.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {evidence.slice(0, 24).map((item) => {
+        const href = evidenceHref(repositoryId, item);
+        const chip = (
+          <span className="inline-flex items-center gap-1 rounded border border-border-secondary bg-bg-tertiary px-1.5 py-0.5 font-mono text-[10px] text-accent hover:border-accent/40">
+            {item.id}
+          </span>
+        );
+        return href ? (
+          <Link key={item.id} to={href} title={`${item.label} — ${item.detail}`}>
+            {chip}
+          </Link>
+        ) : (
+          <span key={item.id} title={`${item.label} — ${item.detail}`}>
+            {chip}
+          </span>
+        );
+      })}
+      {evidence.length > 24 && (
+        <span className="font-mono text-[10px] text-text-muted">+{evidence.length - 24} more</span>
+      )}
+    </div>
+  );
 }
 
 function FindingItem({
@@ -344,12 +443,18 @@ export function AskRepoPilotPage() {
         </div>
 
         {hasEntityContext && (
-          <Panel title="Investigation Context" subtitle="This investigation is focused on a specific entity from the Knowledge Graph.">
+          <Panel title="Investigation Context" subtitle="Active entity scope for this agentic investigation.">
             <div className="flex items-center gap-2 flex-wrap">
               <NodeBadge type={entityType} label={NODE_TYPE_LABELS[entityType] ?? entityType} />
               <span className="font-mono text-sm text-text-primary">{entityId}</span>
+              {response?.agent && response.agent.steps.length > 0 && (
+                <StatusBadge
+                  label={response.agent.mode === 'agentic' ? 'Agentic' : response.agent.mode}
+                  variant="info"
+                />
+              )}
               <span className="text-text-muted">—</span>
-              <span className="text-text-secondary">Questions will be answered in the context of this entity.</span>
+              <span className="text-text-secondary">Scoped investigation. The agent runs deterministic tools in this scope before answering.</span>
             </div>
           </Panel>
         )}
@@ -468,10 +573,14 @@ export function AskRepoPilotPage() {
               </div>
               {!response.ai.available && (
                 <div className="mt-2 p-2 bg-bg-tertiary border border-border-primary rounded text-xs text-text-secondary">
-                  AI analysis unavailable. <Link to="/settings?section=ai" className="text-accent hover:underline">Configure an AI provider</Link> to enable AI-enhanced investigations.
+                  AI analysis unavailable. <Link to="/settings?section=ai" className="text-accent hover:underline">Configure an AI provider</Link> to enable AI-enhanced investigations. The deterministic evidence and agent trace below remain fully usable.
                 </div>
               )}
             </Panel>
+
+            {response.agent && response.agent.steps.length > 0 && (
+              <AgentTracePanel agent={response.agent} />
+            )}
 
             <Panel title="Answer" subtitle="Grounded explanation from repository evidence.">
               <p className="text-[13px] leading-6 text-text-primary whitespace-pre-wrap">
@@ -498,6 +607,9 @@ export function AskRepoPilotPage() {
             )}
 
             <Panel title="Evidence" subtitle={`${response.evidence.length} references backing this answer.`}>
+              <div className="mb-2">
+                <EvidenceChips evidence={response.evidence} repositoryId={effectiveId!} />
+              </div>
               <div className="border border-border-primary rounded">
                 {response.evidence.map((item) => (
                   <EvidenceItem key={item.id} item={item} repositoryId={effectiveId!} />
@@ -506,12 +618,17 @@ export function AskRepoPilotPage() {
             </Panel>
 
             {response.unknowns.length > 0 && (
-              <Panel title="Unknowns" subtitle="Explicit limits of available evidence.">
-                <ul className="list-disc space-y-0.5 pl-4 text-xs text-text-muted">
-                  {response.unknowns.map((unknown, idx) => (
-                    <li key={idx}>{unknown}</li>
-                  ))}
-                </ul>
+              <Panel title="Unknowns" subtitle="Explicit limits — what the database could not establish.">
+                <div className="rounded border border-warning/40 bg-warning-muted/30 p-2">
+                  <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-warning">
+                    <ShieldAlert size={12} /> No hallucinations: these gaps are explicit, not inferred.
+                  </div>
+                  <ul className="list-disc space-y-0.5 pl-4 text-xs text-text-muted">
+                    {response.unknowns.map((unknown, idx) => (
+                      <li key={idx}>{unknown}</li>
+                    ))}
+                  </ul>
+                </div>
               </Panel>
             )}
 

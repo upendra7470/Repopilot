@@ -3,7 +3,7 @@ import {
   requireAuth,
   requireRepositoryAccess,
 } from "../middleware/auth.js";
-import { buildInvestigationContext, type InvestigationTarget } from "../services/investigation.service.js";
+import { buildInvestigationContext, normalizeInvestigationType, type InvestigationTarget } from "../services/investigation.service.js";
 
 const idParams = {
   type: "object",
@@ -378,8 +378,13 @@ export async function investigationRoutes(app: FastifyInstance): Promise<void> {
         return reply.badRequest("Invalid entityType");
       }
 
+      const normalizedType = normalizeInvestigationType(query.entityType);
+      if (!normalizedType) {
+        return reply.badRequest(`Invalid entityType: ${query.entityType}`);
+      }
+
       const target: InvestigationTarget = {
-        type: query.entityType as InvestigationTarget["type"],
+        type: normalizedType,
         identifier: query.entityId,
       };
 

@@ -29,9 +29,12 @@ const NODE_TYPE_LABELS: Record<string, string> = {
   file: 'File',
   contributor: 'Contributor',
   pull_request: 'Pull Request',
+  pr: 'Pull Request',
   issue: 'Issue',
   ci_workflow: 'CI Workflow',
+  workflow: 'CI Workflow',
   ci_run: 'CI Run',
+  run: 'CI Run',
   risk: 'Risk',
   incident: 'Incident',
 };
@@ -43,9 +46,12 @@ function NodeBadge({ type, label }: { type: string; label: string }) {
     file: <FileText size={12} className="text-warning" />,
     contributor: <Users size={12} className="text-success" />,
     pull_request: <GitPullRequest size={12} className="text-accent" />,
+    pr: <GitPullRequest size={12} className="text-accent" />,
     issue: <AlertCircle size={12} className="text-warning" />,
     ci_workflow: <Activity size={12} className="text-info" />,
+    workflow: <Activity size={12} className="text-info" />,
     ci_run: <Activity size={12} className="text-warning" />,
+    run: <Activity size={12} className="text-warning" />,
     risk: <ShieldAlert size={12} className="text-danger" />,
     incident: <ShieldAlert size={12} className="text-danger" />,
   };
@@ -58,37 +64,84 @@ function NodeBadge({ type, label }: { type: string; label: string }) {
   );
 }
 
-function EvidenceItem({
-  item,
-  onNavigate,
-}: {
-  item: { id: string; kind: string; label: string; detail: string; entityType: string; entityId: string; at: string | null };
-  onNavigate?: (type: string, id: string) => void;
-}) {
-  const handleClick = () => {
-    if (onNavigate) onNavigate(item.entityType, item.entityId);
-  };
+// ---- Typed helpers for real backend shapes ----
+// Backend InvestigationContext uses these shapes (see investigation.service.ts):
+// CommitRef: { sha, shortSha, message, authorLogin, committedAt, url }
+// FileRef: { path, area, changeCount, recentChanges, hot, contributors, linkedCommits, linkedPrs, linkedIssues }
+// PrRef: { id, number, title, state, merged, authorLogin, ... }
+// IssueRef: { number, title, state, authorLogin, ... }
+// RunRef: { githubId, runNumber, name, status, conclusion, headBranch, headSha, workflowName, ... }
+// WorkflowRef: { id, githubId, name, path, state }
+// RiskRef: { id, type, severity, title, summary, ... }
+// IncidentRef: { fingerprint, title, status, severity, workflowGithubId, ... }
+// ContributorRef: { login, name, commitCount, filesTouched }
 
+function displayLabelForCommit(c: { shortSha: string; message: string | null }): string {
+  const msg = c.message?.split('\n')[0]?.trim() ?? '';
+  return msg ? `${c.shortSha} ${msg}` : c.shortSha;
+}
+
+function displayLabelForFile(f: { path: string }): string {
+  return f.path;
+}
+
+function displayLabelForPr(p: { number: number; title: string | null }): string {
+  return p.title ? `#${p.number} ${p.title}` : `PR #${p.number}`;
+}
+
+function displayLabelForIssue(i: { number: number; title: string | null }): string {
+  return i.title ? `#${i.number} ${i.title}` : `Issue #${i.number}`;
+}
+
+function displayLabelForRun(r: { githubId: string; name: string | null; conclusion: string | null }): string {
+  if (r.name) return `${r.name} ${r.githubId.slice(0, 8)}${r.conclusion ? ` (${r.conclusion})` : ''}`;
+  return `Run ${r.githubId.slice(0, 12)}${r.conclusion ? ` (${r.conclusion})` : ''}`;
+}
+
+function displayLabelForRisk(r: { severity: string; title: string }): string {
+  return `${r.severity}: ${r.title}`;
+}
+
+function displayLabelForIncident(i: { title: string }): string {
+  return i.title;
+}
+
+function displayLabelForContributor(c: { login: string; name: string | null }): string {
+  return c.name ? `${c.login} (${c.name})` : c.login;
+}
+
+function displayLabelForWorkflow(w: { githubId: string; name: string | null }): string {
+  return w.name ?? w.githubId;
+}
+
+function EvidenceRow({
+  id,
+  label,
+  detail,
+  at,
+}: {
+  id: string;
+  label: string;
+  detail?: string | null;
+  at?: string | null;
+}) {
   return (
     <div className="flex items-center gap-1.5 px-2 py-1.5 border-y border-border-primary">
-      <button
-        onClick={handleClick}
-        className="flex min-w-0 flex-1 items-center gap-1.5 hover:underline transition-colors"
-        disabled={!onNavigate}
-        style={{ cursor: onNavigate ? 'pointer' : 'default' }}
-      >
-        <span className="font-mono text-[11px] text-accent">{item.id}</span>
-        <span className="text-text-muted"> · </span>
-        <span className="font-medium text-text-primary">{item.label}</span>
-        <span className="text-text-muted"> — </span>
-        <span className="text-text-secondary">{item.detail}</span>
-        {item.at && (
-          <>
-            <span className="text-text-muted"> @ </span>
-            <span className="font-mono text-[11px] text-text-muted">{new Date(item.at).toLocaleString()}</span>
-          </>
-        )}
-      </button>
+      <span className="font-mono text-[11px] text-accent shrink-0">{id}</span>
+      <span className="text-text-muted shrink-0"> · </span>
+      <span className="font-medium text-text-primary truncate">{label}</span>
+      {detail && (
+        <>
+          <span className="text-text-muted shrink-0"> — </span>
+          <span className="text-text-secondary truncate text-xs">{detail}</span>
+        </>
+      )}
+      {at && (
+        <>
+          <span className="text-text-muted shrink-0"> @ </span>
+          <span className="font-mono text-[11px] text-text-muted shrink-0">{new Date(at).toLocaleString()}</span>
+        </>
+      )}
     </div>
   );
 }
@@ -309,6 +362,20 @@ export function InvestigationPage() {
   const evidence = investigation?.evidence;
   const unknowns = investigation?.unknowns;
 
+  const hasTemporal =
+    (temporal?.changesBefore?.length ?? 0) > 0 || (temporal?.changesAfter?.length ?? 0) > 0;
+  const hasPatterns =
+    (patterns?.repeatedCiFailures?.length ?? 0) > 0 ||
+    (patterns?.repeatedRiskyFiles?.length ?? 0) > 0 ||
+    (patterns?.repeatedIncidentAreas?.length ?? 0) > 0;
+
+  const evidenceCount = evidence
+    ? Object.values(evidence).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0)
+    : 0;
+  const directCount = direct
+    ? Object.values(direct).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0)
+    : 0;
+
   return (
     <div className="space-y-3">
       <RepoContextHeader repo={effectiveRepo} />
@@ -344,8 +411,7 @@ export function InvestigationPage() {
         <div className="flex items-center gap-2">
           {investigation && (
             <span className="font-mono text-[11px] text-text-muted">
-              {Object.values(investigation.directRelationships).flat().length} entities ·{' '}
-              {investigation.evidence ? Object.values(investigation.evidence).flat().length : 0} evidence items
+              {directCount} entities · {evidenceCount} evidence items
             </span>
           )}
           <button
@@ -384,11 +450,11 @@ export function InvestigationPage() {
               <NodeBadge type={investigation.target.type} label={NODE_TYPE_LABELS[investigation.target.type] ?? investigation.target.type} />
               <span className="font-mono text-sm text-text-primary">{investigation.target.identifier}</span>
             </div>
-            {temporal?.incidentTimeline?.length && (
+            {temporal?.incidentTimeline?.length ? (
               <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary">
                 <span>Timeline: {temporal.incidentTimeline.length} events</span>
               </div>
-            )}
+            ) : null}
           </Panel>
 
           <Panel title="Engineering Context" subtitle="Direct relationships from synchronized evidence.">
@@ -396,158 +462,116 @@ export function InvestigationPage() {
               <RelationshipItem
                 kind="run"
                 label="CI Runs"
-                items={direct?.runs?.map((r: unknown) => {
-                  const run = r as { githubId: string; label: string };
-                  return { id: run.githubId, label: run.label };
-                }) ?? []}
+                items={
+                  (direct?.runs as Array<{ githubId: string; name: string | null; conclusion: string | null }> | undefined)?.map((r) => ({
+                    id: r.githubId,
+                    label: displayLabelForRun(r),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="commit"
                 label="Commits"
-                items={direct?.commits?.map((c: unknown) => {
-                  const commit = c as { shortSha: string; label: string };
-                  return { id: commit.shortSha, label: commit.label };
-                }) ?? []}
+                items={
+                  (direct?.commits as Array<{ sha: string; shortSha: string; message: string | null }> | undefined)?.map((c) => ({
+                    id: c.sha,
+                    label: displayLabelForCommit(c),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="file"
                 label="Files"
-                items={direct?.files?.map((f: unknown) => {
-                  const file = f as { path: string; label: string };
-                  return { id: file.path, label: file.label };
-                }) ?? []}
+                items={
+                  (direct?.files as Array<{ path: string }> | undefined)?.map((f) => ({
+                    id: f.path,
+                    label: displayLabelForFile(f),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="pull_request"
                 label="Pull Requests"
-                items={direct?.prs?.map((p: unknown) => {
-                  const pr = p as { number: number; label: string };
-                  return { id: String(pr.number), label: pr.label };
-                }) ?? []}
+                items={
+                  (direct?.prs as Array<{ id: string; number: number; title: string | null }> | undefined)?.map((p) => ({
+                    id: String(p.number),
+                    label: displayLabelForPr(p),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="issue"
                 label="Issues"
-                items={direct?.issues?.map((i: unknown) => {
-                  const issue = i as { number: number; label: string };
-                  return { id: String(issue.number), label: issue.label };
-                }) ?? []}
+                items={
+                  (direct?.issues as Array<{ number: number; title: string | null }> | undefined)?.map((i) => ({
+                    id: String(i.number),
+                    label: displayLabelForIssue(i),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="risk"
                 label="Risks"
-                items={direct?.risks?.map((r: unknown) => {
-                  const risk = r as { id: string; label: string };
-                  return { id: risk.id, label: risk.label };
-                }) ?? []}
+                items={
+                  (direct?.risks as Array<{ id: string; severity: string; title: string }> | undefined)?.map((r) => ({
+                    id: r.id,
+                    label: displayLabelForRisk(r),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="incident"
                 label="Incidents"
-                items={direct?.incidents?.map((i: unknown) => {
-                  const incident = i as { fingerprint: string; label: string };
-                  return { id: incident.fingerprint, label: incident.label };
-                }) ?? []}
+                items={
+                  (direct?.incidents as Array<{ fingerprint: string; title: string }> | undefined)?.map((i) => ({
+                    id: i.fingerprint,
+                    label: displayLabelForIncident(i),
+                  })) ?? []
+                }
               />
               <RelationshipItem
                 kind="contributor"
                 label="Contributors"
-                items={direct?.contributors?.map((c: unknown) => {
-                  const contrib = c as { login: string; label: string };
-                  return { id: contrib.login, label: contrib.label };
-                }) ?? []}
+                items={
+                  (direct?.contributors as Array<{ login: string; name: string | null }> | undefined)?.map((c) => ({
+                    id: c.login,
+                    label: displayLabelForContributor(c),
+                  })) ?? []
+                }
+              />
+              <RelationshipItem
+                kind="workflow"
+                label="Workflows"
+                items={
+                  (direct?.workflows as Array<{ id: string; githubId: string; name: string | null }> | undefined)?.map((w) => ({
+                    id: w.githubId,
+                    label: displayLabelForWorkflow(w),
+                  })) ?? []
+                }
               />
             </div>
           </Panel>
 
-          {temporal?.changesBefore?.length || temporal?.changesAfter?.length && (
+          {hasTemporal && (
             <Panel title="Temporal Context" subtitle="Changes before and after the target entity.">
-              {temporal?.changesBefore?.length && (
-                <div className="space-y-3">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-info">BEFORE (earlier)</h4>
-                  <div className="space-y-1">
-                    {temporal.changesBefore.slice(0, 10).map((c: unknown) => {
-                      const commit = c as { shortSha: string; message: string | null; committedAt: string | null };
-                      return (
-                        <TemporalItem key={commit.shortSha} item={commit} prefix="BEFORE" />
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              {temporal?.changesAfter?.length && (
-                <div className="space-y-3">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-warning">AFTER (later)</h4>
-                  <div className="space-y-1">
-                    {temporal.changesAfter.slice(0, 10).map((c: unknown) => {
-                      const commit = c as { shortSha: string; message: string | null; committedAt: string | null };
-                      return (
-                        <TemporalItem key={commit.shortSha} item={commit} prefix="AFTER" />
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </Panel>
-          )}
-
-          {patterns?.repeatedCiFailures?.length || patterns?.repeatedRiskyFiles?.length || patterns?.repeatedIncidentAreas?.length && (
-            <Panel title="Repeated Patterns" subtitle="Deterministic patterns detected from repository evidence.">
               <div className="space-y-3">
-                {patterns?.repeatedCiFailures?.length && (
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">Repeated CI Failures</h4>
+                {(temporal?.changesBefore?.length ?? 0) > 0 && (
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-info">BEFORE (earlier)</h4>
                     <div className="space-y-1">
-                      {patterns.repeatedCiFailures.slice(0, 5).map((p: unknown) => {
-                        const pattern = p as { workflowGithubId: string; workflowName: string | null; failureCount: number; streakLength: number };
-                        return (
-                          <PatternItem
-                            key={pattern.workflowGithubId}
-                            label={pattern.workflowName ?? pattern.workflowGithubId}
-                            detail={`${pattern.failureCount} failures, streak of ${pattern.streakLength}`}
-                            badgeLabel="CI Failure"
-                            badgeVariant="danger"
-                          />
-                        );
-                      })}
+                      {(temporal!.changesBefore as Array<{ shortSha: string; message: string | null; committedAt: string | null }>).slice(0, 10).map((c) => (
+                        <TemporalItem key={c.shortSha} item={{ shortSha: c.shortSha, message: c.message, committedAt: c.committedAt as string | null }} prefix="BEFORE" />
+                      ))}
                     </div>
                   </div>
                 )}
-                {patterns?.repeatedRiskyFiles?.length && (
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">Repeated Risky Files</h4>
+                {(temporal?.changesAfter?.length ?? 0) > 0 && (
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-warning">AFTER (later)</h4>
                     <div className="space-y-1">
-                      {patterns.repeatedRiskyFiles.slice(0, 5).map((p: unknown) => {
-                        const pattern = p as { path: string; riskCount: number; incidentCount: number; severity: string };
-                        return (
-                          <PatternItem
-                            key={pattern.path}
-                            label={pattern.path}
-                            detail={ `${pattern.riskCount} risk findings, ${pattern.incidentCount} incidents`}
-                            badgeLabel={pattern.severity}
-                            badgeVariant={pattern.severity === 'critical' ? 'danger' : 'warning'}
-                          />
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                {patterns?.repeatedIncidentAreas?.length && (
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">Repeated Incident Areas</h4>
-                    <div className="space-y-1">
-                      {patterns.repeatedIncidentAreas.slice(0, 5).map((p: unknown) => {
-                        const pattern = p as { workflowGithubId: string; workflowName: string | null; incidentCount: number };
-                        return (
-                          <PatternItem
-                            key={pattern.workflowGithubId}
-                            label={pattern.workflowName ?? pattern.workflowGithubId}
-                            detail={`${pattern.incidentCount} incidents`}
-                            badgeLabel="Incidents"
-                            badgeVariant="danger"
-                          />
-                        );
-                      })}
+                      {(temporal!.changesAfter as Array<{ shortSha: string; message: string | null; committedAt: string | null }>).slice(0, 10).map((c) => (
+                        <TemporalItem key={c.shortSha} item={{ shortSha: c.shortSha, message: c.message, committedAt: c.committedAt as string | null }} prefix="AFTER" />
+                      ))}
                     </div>
                   </div>
                 )}
@@ -555,66 +579,106 @@ export function InvestigationPage() {
             </Panel>
           )}
 
-          <Panel title="Evidence" subtitle={`${evidence ? Object.values(evidence).flat().length : 0} evidence items`}>
-            <div className="border border-border-primary rounded space-y-1">
-              {evidence?.commits?.slice(0, 20).map((c: unknown) => {
-                const commit = c as { id: string; shortSha: string; message: string | null; committedAt: string | null };
-                return (
-                  <EvidenceItem
-                    key={commit.id}
-                    item={{
-                      id: commit.id,
-                      kind: 'commit',
-                      label: `${commit.shortSha} ${commit.message?.split('\n')[0] ?? ''}`,
-                      detail: commit.committedAt ? new Date(commit.committedAt).toLocaleString() : 'No date',
-                      entityType: 'commit',
-                      entityId: commit.id,
-                      at: commit.committedAt,
-                    }}
-                  />
-                );
-              })}
-              {evidence?.files?.slice(0, 20).map((f: unknown) => {
-                const file = f as { path: string; label: string; detail: string };
-                return (
-                  <EvidenceItem
-                    key={file.path}
-                    item={{
-                      id: `file:${file.path}`,
-                      kind: 'file',
-                      label: file.label,
-                      detail: file.detail,
-                      entityType: 'file',
-                      entityId: file.path,
-                      at: null,
-                    }}
-                  />
-                );
-              })}
-              {evidence?.runs?.slice(0, 20).map((r: unknown) => {
-                const run = r as { githubId: string; label: string; detail: string };
-                return (
-                  <EvidenceItem
-                    key={run.githubId}
-                    item={{
-                      id: run.githubId,
-                      kind: 'run',
-                      label: run.label,
-                      detail: run.detail,
-                      entityType: 'run',
-                      entityId: run.githubId,
-                      at: null,
-                    }}
-                  />
-                );
-              })}
+          {hasPatterns && (
+            <Panel title="Repeated Patterns" subtitle="Deterministic patterns detected from repository evidence.">
+              <div className="space-y-3">
+                {(patterns?.repeatedCiFailures?.length ?? 0) > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">Repeated CI Failures</h4>
+                    <div className="space-y-1">
+                      {(patterns!.repeatedCiFailures as Array<{ workflowGithubId: string; workflowName: string | null; failureCount: number; streakLength: number }>).slice(0, 5).map((p) => (
+                        <PatternItem
+                          key={p.workflowGithubId}
+                          label={p.workflowName ?? p.workflowGithubId}
+                          detail={`${p.failureCount} failures, streak of ${p.streakLength}`}
+                          badgeLabel="CI Failure"
+                          badgeVariant="danger"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(patterns?.repeatedRiskyFiles?.length ?? 0) > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">Repeated Risky Files</h4>
+                    <div className="space-y-1">
+                      {(patterns!.repeatedRiskyFiles as Array<{ path: string; riskCount: number; incidentCount: number; severity: string }>).slice(0, 5).map((p) => (
+                        <PatternItem
+                          key={p.path}
+                          label={p.path}
+                          detail={`${p.riskCount} risk findings, ${p.incidentCount} incidents`}
+                          badgeLabel={p.severity}
+                          badgeVariant={p.severity === 'critical' ? 'danger' : 'warning'}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(patterns?.repeatedIncidentAreas?.length ?? 0) > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">Repeated Incident Areas</h4>
+                    <div className="space-y-1">
+                      {(patterns!.repeatedIncidentAreas as Array<{ workflowGithubId: string; workflowName: string | null; incidentCount: number }>).slice(0, 5).map((p) => (
+                        <PatternItem
+                          key={p.workflowGithubId}
+                          label={p.workflowName ?? p.workflowGithubId}
+                          detail={`${p.incidentCount} incidents`}
+                          badgeLabel="Incidents"
+                          badgeVariant="danger"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Panel>
+          )}
+
+          <Panel title="Evidence" subtitle={`${evidenceCount} evidence items · canonical IDs`}>
+            <div className="border border-border-primary rounded divide-y divide-border-primary/50">
+              {(evidence?.commits as Array<{ sha: string; shortSha: string; message: string | null; committedAt: string | null }> | undefined)?.slice(0, 10).map((c) => (
+                <EvidenceRow
+                  key={c.sha}
+                  id={`commit:${c.shortSha}`}
+                  label={c.message?.split('\n')[0] ?? c.shortSha}
+                  detail={c.sha.slice(0, 12)}
+                  at={c.committedAt as string | null}
+                />
+              ))}
+              {(evidence?.files as Array<{ path: string; area: string; hot: boolean }> | undefined)?.slice(0, 10).map((f) => (
+                <EvidenceRow key={f.path} id={`file:${f.path}`} label={f.path} detail={f.hot ? 'hot file' : f.area} />
+              ))}
+              {(evidence?.prs as Array<{ number: number; title: string | null }> | undefined)?.slice(0, 10).map((p) => (
+                <EvidenceRow key={`pr-${p.number}`} id={`pr:${p.number}`} label={displayLabelForPr(p)} />
+              ))}
+              {(evidence?.issues as Array<{ number: number; title: string | null }> | undefined)?.slice(0, 10).map((i) => (
+                <EvidenceRow key={`issue-${i.number}`} id={`issue:${i.number}`} label={displayLabelForIssue(i)} />
+              ))}
+              {(evidence?.runs as Array<{ githubId: string; name: string | null; conclusion: string | null }> | undefined)?.slice(0, 10).map((r) => (
+                <EvidenceRow key={r.githubId} id={`run:${r.githubId.slice(0, 12)}`} label={displayLabelForRun(r)} detail={r.conclusion ?? undefined} />
+              ))}
+              {(evidence?.workflows as Array<{ githubId: string; name: string | null }> | undefined)?.slice(0, 10).map((w) => (
+                <EvidenceRow key={w.githubId} id={`workflow:${w.githubId.slice(0, 12)}`} label={displayLabelForWorkflow(w)} />
+              ))}
+              {(evidence?.risks as Array<{ id: string; severity: string; title: string }> | undefined)?.slice(0, 10).map((r) => (
+                <EvidenceRow key={r.id} id={`risk:${r.id.slice(0, 12)}`} label={displayLabelForRisk(r)} />
+              ))}
+              {(evidence?.incidents as Array<{ fingerprint: string; title: string }> | undefined)?.slice(0, 10).map((i) => (
+                <EvidenceRow key={i.fingerprint} id={`incident:${i.fingerprint.slice(0, 12)}`} label={displayLabelForIncident(i)} />
+              ))}
+              {(evidence?.contributors as Array<{ login: string; name: string | null }> | undefined)?.slice(0, 10).map((c) => (
+                <EvidenceRow key={c.login} id={`contributor:${c.login}`} label={displayLabelForContributor(c)} />
+              ))}
+              {evidenceCount === 0 && (
+                <div className="px-3 py-4 text-center text-xs text-text-muted">No evidence items in this investigation.</div>
+              )}
             </div>
           </Panel>
 
-          {unknowns?.length && (
+          {(unknowns?.length ?? 0) > 0 && (
             <Panel title="Unknowns" subtitle="Explicit limits of available evidence.">
-              <ul className="list-disc space-y-1 pl-4 text-xs text-text-muted">
-                {unknowns.map((unknown, idx) => (
+              <ul className="space-y-1">
+                {unknowns!.map((unknown, idx) => (
                   <UnknownItem key={idx} unknown={unknown} />
                 ))}
               </ul>

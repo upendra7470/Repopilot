@@ -1265,6 +1265,22 @@ export interface InvestigationContext {
   unknowns: string[];
 }
 
+export interface AgentStep {
+  step: number;
+  thought: string;
+  tool: string;
+  args?: Record<string, unknown>;
+  summary: string;
+  evidenceIds: string[];
+  durationMs: number;
+}
+
+export interface AgentTrace {
+  mode: string;
+  steps: AgentStep[];
+  toolEvidenceIds: string[];
+}
+
 export interface AskResponse {
   question: string;
   intent: string;
@@ -1284,6 +1300,7 @@ export interface AskResponse {
   };
   investigation: InvestigationContext | null;
   ai: AskAiInfo;
+  agent?: AgentTrace | null;
 }
 
 export interface GraphNode {

@@ -13,7 +13,7 @@ import {
 } from "../services/ask-analysis.service.js";
 import { getAiConfig } from "../services/ai-provider.js";
 import { resolveAiConfig } from "../services/ai-registry.js";
-import { buildInvestigationContext, type InvestigationContext, type InvestigationTarget } from "../services/investigation.service.js";
+import { buildInvestigationContext, normalizeInvestigationType, type InvestigationContext } from "../services/investigation.service.js";
 
 const idParams = {
   type: "object",
@@ -94,6 +94,30 @@ const windowSchema = {
   required: ["label", "days", "since"],
 } as const;
 
+const agentStepSchema = {
+  type: "object",
+  required: ["step", "thought", "tool", "summary", "evidenceIds", "durationMs"],
+  properties: {
+    step: { type: "number" },
+    thought: { type: "string" },
+    tool: { type: "string" },
+    args: { type: "object" },
+    summary: { type: "string" },
+    evidenceIds: { type: "array", items: { type: "string" } },
+    durationMs: { type: "number" },
+  },
+} as const;
+
+const agentSchema = {
+  type: "object",
+  required: ["mode", "steps", "toolEvidenceIds"],
+  properties: {
+    mode: { type: "string" },
+    steps: { type: "array", items: agentStepSchema },
+    toolEvidenceIds: { type: "array", items: { type: "string" } },
+  },
+} as const;
+
 const askResponseSchema = {
   type: "object",
   required: [
@@ -111,6 +135,7 @@ const askResponseSchema = {
     "metadata",
     "ai",
     "investigation",
+    "agent",
   ],
   properties: {
     question: { type: "string" },
@@ -215,6 +240,7 @@ const askResponseSchema = {
         },
       },
     },
+    agent: agentSchema,
   },
 } as const;
 
@@ -253,21 +279,31 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.user!.id;
       const aiConfig = await resolveAiConfig(userId);
 
-      // Build investigation context if entity context is provided
+      // Build investigation context if entity context is provided (reuse for both response + AI).
       let investigationContext: InvestigationContext | null = null;
       if (context?.entityType && context?.entityId) {
-        try {
-          investigationContext = await buildInvestigationContext(id, {
-            type: context.entityType as InvestigationTarget["type"],
-            identifier: context.entityId,
-          });
-        } catch (err) {
-          const logger = (await import("../utils/logger.js")).getLogger();
-          logger.warn({ err, repositoryId: id, context }, "Failed to build investigation context, proceeding without");
+        const normalizedType = normalizeInvestigationType(context.entityType);
+        if (normalizedType) {
+          try {
+            investigationContext = await buildInvestigationContext(id, {
+              type: normalizedType,
+              identifier: context.entityId,
+            });
+          } catch (err) {
+            const logger = (await import("../utils/logger.js")).getLogger();
+            logger.warn({ err, repositoryId: id, context }, "Failed to build investigation context, proceeding without");
+          }
         }
       }
 
-      const aiResult = await requestAskAnalysis(id, question.trim(), context ?? undefined, history ?? [], aiConfig ?? undefined);
+      const aiResult = await requestAskAnalysis(
+        id,
+        question.trim(),
+        context ?? undefined,
+        history ?? [],
+        aiConfig ?? undefined,
+        investigationContext,
+      );
 
       const merged = mergeDeterministicWithAi(deterministic, aiResult.analysis ?? { aiUnavailable: true });
 
@@ -304,6 +340,11 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
           status: aiResult.status,
           fingerprint: aiResult.fingerprint || null,
           error: aiResult.error,
+        },
+        agent: {
+          mode: aiResult.agent.mode,
+          steps: aiResult.agent.steps,
+          toolEvidenceIds: aiResult.agent.toolEvidenceIds,
         },
       });
     },

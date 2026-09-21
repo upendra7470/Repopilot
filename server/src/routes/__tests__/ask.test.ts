@@ -324,6 +324,32 @@ describe("Ask RepoPilot API", () => {
     expect(response.statusCode).toBe(200);
   });
 
+  it("includes the deterministic agent trace in every response", async () => {
+    const login = await loginTestUser();
+    const record = await seededRepo(login.user.id);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${record.id}/ask`,
+      headers: { cookie: login.cookie },
+      payload: { question: "Why is CI unstable?" },
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = JSON.parse(response.payload);
+    expect(body.agent).toBeDefined();
+    expect(typeof body.agent.mode).toBe("string");
+    expect(Array.isArray(body.agent.steps)).toBe(true);
+    expect(body.agent.steps.length).toBeGreaterThan(0);
+    expect(Array.isArray(body.agent.toolEvidenceIds)).toBe(true);
+    for (const step of body.agent.steps) {
+      expect(typeof step.thought).toBe("string");
+      expect(typeof step.tool).toBe("string");
+      expect(typeof step.summary).toBe("string");
+      expect(Array.isArray(step.evidenceIds)).toBe(true);
+    }
+  });
+
   it("returns 404 for malformed UUID", async () => {
     const _login = await loginTestUser();
     // Use a fresh user to avoid rate limit from previous tests

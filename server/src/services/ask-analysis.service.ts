@@ -9,7 +9,8 @@ import {
   getAiConfig,
 } from "./ai-provider.js";
 import { createAdapter, type AiConfig } from "./ai-registry.js";
-import { buildInvestigationContext, type InvestigationContext } from "./investigation.service.js";
+import { normalizeInvestigationType, buildInvestigationContext, type InvestigationContext } from "./investigation.service.js";
+import { runAgentLoop, AGENT_SYSTEM_ADDENDUM, type AgentRunResult } from "./agent-loop.service.js";
 import {
   answerQuestion,
   type AskResult,
@@ -52,6 +53,7 @@ export interface AskAnalysisResult {
   analysis: AskAiResponse | null;
   error: { code: string; message: string } | null;
   cached: boolean;
+  agent: AgentRunResult;
 }
 
 const SYSTEM_PROMPT = `You are RepoPilot's engineering investigation assistant.
@@ -174,6 +176,7 @@ async function getCachedAnalysis(
     analysis: sanitized,
     error: null,
     cached: true,
+    agent: { mode: "cached", steps: [], toolEvidenceIds: [], agentContext: "" },
   };
 }
 
@@ -252,14 +255,16 @@ function buildInvestigationContextPrompt(investigation: InvestigationContext): s
 
   if (directRelationships) {
     const rel = directRelationships;
+    const prefix = `${target.type} →`;
     const parts: string[] = [];
-    if (rel.runs.length) parts.push(`incident → run:${rel.runs.map((r) => r.githubId).join(", ")}`);
-    if (rel.workflows.length) parts.push(`incident → workflow:${rel.workflows.map((w) => w.githubId).join(", ")}`);
-    if (rel.commits.length) parts.push(`incident → commit:${rel.commits.map((c) => c.shortSha).join(", ")}`);
-    if (rel.files.length) parts.push(`incident → file:${rel.files.map((f) => f.path).join(", ")}`);
-    if (rel.prs.length) parts.push(`incident → pull_request:${rel.prs.map((p) => p.number).join(", ")}`);
-    if (rel.issues.length) parts.push(`incident → issue:${rel.issues.map((i) => i.number).join(", ")}`);
-    if (rel.risks.length) parts.push(`incident → risk:${rel.risks.map((r) => r.id).join(", ")}`);
+    if (rel.runs.length) parts.push(`${prefix} run:${rel.runs.map((r) => r.githubId).join(", ")}`);
+    if (rel.workflows.length) parts.push(`${prefix} workflow:${rel.workflows.map((w) => w.githubId).join(", ")}`);
+    if (rel.commits.length) parts.push(`${prefix} commit:${rel.commits.map((c) => c.shortSha).join(", ")}`);
+    if (rel.files.length) parts.push(`${prefix} file:${rel.files.map((f) => f.path).join(", ")}`);
+    if (rel.prs.length) parts.push(`${prefix} pull_request:${rel.prs.map((p) => p.number).join(", ")}`);
+    if (rel.issues.length) parts.push(`${prefix} issue:${rel.issues.map((i) => i.number).join(", ")}`);
+    if (rel.risks.length) parts.push(`${prefix} risk:${rel.risks.map((r) => r.id).join(", ")}`);
+    if (rel.incidents.length) parts.push(`${prefix} incident:${rel.incidents.map((i) => i.fingerprint.slice(0, 12)).join(", ")}`);
     if (parts.length) {
       lines.push("RELATIONSHIPS:");
       parts.forEach((p) => lines.push(`  ${p}`));
@@ -320,6 +325,7 @@ export async function analyzeWithAi(
   history: AskConversationTurn[] = [],
   aiConfig?: AiConfig | null,
   investigationContext?: InvestigationContext | null,
+  agentContext?: string | null,
 ): Promise<AskAiResponse | { aiUnavailable: true }> {
   const logger = getLogger();
   const config = aiConfig ?? getAiConfig();
@@ -338,7 +344,15 @@ export async function analyzeWithAi(
     investigationPrompt = `Investigation Context:\n${buildInvestigationContextPrompt(investigationContext)}\n\n`;
   }
 
-  const userPrompt = `${investigationPrompt}Question: "${result.question}"
+  // Agentic consolidation: deterministic tool-trace appended verbatim so
+  // every provider (OpenRouter, Ollama, LM Studio, custom) reasons over
+  // the same verified observations with the same structured instructions.
+  let agentPrompt = "";
+  if (agentContext) {
+    agentPrompt = `${agentContext}\n\n`;
+  }
+
+  const userPrompt = `${investigationPrompt}${agentPrompt}Question: "${result.question}"
 Intent: ${result.intent}
 ${entitiesContext}
 ${windowContext}
@@ -359,7 +373,7 @@ Provide a structured JSON response per the system prompt.`;
 
   try {
     const raw = await adapter.completeChat({
-      system: SYSTEM_PROMPT,
+      system: agentContext ? `${SYSTEM_PROMPT}\n\n${AGENT_SYSTEM_ADDENDUM}` : SYSTEM_PROMPT,
       user: userPrompt,
       maxTokens: 3000,
       timeoutMs: 60_000,
@@ -397,6 +411,7 @@ export async function requestAskAnalysis(
   context?: { entityType: string; entityId: string },
   history: AskConversationTurn[] = [],
   aiConfig?: AiConfig | null,
+  prebuiltInvestigation?: InvestigationContext | null,
 ): Promise<AskAnalysisResult> {
   const logger = getLogger();
   const deterministic = await answerQuestion(repositoryId, question, history, context);
@@ -405,7 +420,10 @@ export async function requestAskAnalysis(
   const evidenceFingerprint = fingerprintEvidence(JSON.stringify(evidencePackage));
   const questionHash = hashQuestion(question, context);
 
-  // Try to get cached analysis, but don't fail if cache is unavailable
+  // Try to get cached analysis, but don't fail if cache is unavailable.
+  // The agent tool-trace is deterministic for identical evidence, so a
+  // cached answer reuses the stored analysis with a "cached" agent marker
+  // instead of re-executing tools against the database.
   let cached: AskAnalysisResult | null = null;
   try {
     cached = await getCachedAnalysis(repositoryId, questionHash, evidenceFingerprint);
@@ -414,23 +432,40 @@ export async function requestAskAnalysis(
   }
   if (cached) {
     logger.debug({ repositoryId, questionHash }, "Reusing cached AI ask analysis");
-    return cached;
+    return {
+      ...cached,
+      agent: { mode: "cached", steps: [], toolEvidenceIds: [], agentContext: "" },
+    };
   }
 
-  // Fetch investigation context if entity context is provided
-  let investigationContext: InvestigationContext | null = null;
-  if (context?.entityType && context?.entityId) {
-    try {
-      investigationContext = await buildInvestigationContext(repositoryId, {
-        type: context.entityType as InvestigationContext["target"]["type"],
-        identifier: context.entityId,
-      });
-    } catch (err) {
-      logger.warn({ err, repositoryId, context }, "Failed to build investigation context, proceeding without");
+  // Use prebuilt investigation if provided by the ask route; otherwise build if needed.
+  let investigationContext: InvestigationContext | null = prebuiltInvestigation ?? null;
+  if (!investigationContext && context?.entityType && context?.entityId) {
+    const normalizedType = normalizeInvestigationType(context.entityType);
+    if (normalizedType) {
+      try {
+        investigationContext = await buildInvestigationContext(repositoryId, {
+          type: normalizedType,
+          identifier: context.entityId,
+        });
+      } catch (err) {
+        logger.warn({ err, repositoryId, context }, "Failed to build investigation context, proceeding without");
+      }
     }
   }
 
-  const ai = await analyzeWithAi(deterministic, history, aiConfig, investigationContext);
+  // Agentic loop: autonomous deterministic tool executions consolidated
+  // for the reasoning pass. Runs with or without an AI provider so the
+  // trace is always available to the UI.
+  let agent: AgentRunResult;
+  try {
+    agent = await runAgentLoop(repositoryId, deterministic, context ?? null);
+  } catch (err) {
+    logger.warn({ err, repositoryId }, "Agent loop failed, proceeding without tool trace");
+    agent = { mode: "deterministic-only", steps: [], toolEvidenceIds: [], agentContext: "" };
+  }
+
+  const ai = await analyzeWithAi(deterministic, history, aiConfig, investigationContext, agent.agentContext || null);
 
   let result: AskAnalysisResult;
   if ("aiUnavailable" in ai) {
@@ -441,6 +476,7 @@ export async function requestAskAnalysis(
       analysis: null,
       error: { code: "AI_UNAVAILABLE", message: "AI provider not configured or unavailable" },
       cached: false,
+      agent,
     };
   } else {
     result = {
@@ -450,6 +486,7 @@ export async function requestAskAnalysis(
       analysis: ai,
       error: null,
       cached: false,
+      agent,
     };
   }
 
