@@ -3,12 +3,14 @@ import { getDb } from "../db/index.js";
 import {
   ciRuns,
   ciWorkflows,
-  commits,
   commitFiles,
+  commits,
   contributors,
   files,
   issues,
   pullRequests,
+  prCommits,
+  prFiles,
 } from "../db/schema.js";
 import { detectIncidents } from "./incident-intelligence.service.js";
 import { analyzeRepositoryRisks } from "./risk.service.js";
@@ -173,6 +175,8 @@ export async function buildGraph(
     runsList,
     riskReport,
     incidentList,
+    prFilesList,
+    prCommitsList,
   ] = await Promise.all([
     loadCommits(repositoryId, limit),
     loadFiles(repositoryId, limit),
@@ -183,6 +187,8 @@ export async function buildGraph(
     loadRuns(repositoryId, limit),
     getRiskReport(repositoryId),
     detectIncidents(repositoryId),
+    loadPrFiles(repositoryId, limit),
+    loadPrCommits(repositoryId, limit),
   ]);
 
   // Build nodes for each entity type
@@ -201,7 +207,7 @@ export async function buildGraph(
   buildCommitEdges(commitsList, nodes, addEdge, repositoryId);
   buildFileEdges(filesList, commitFiles, nodes, addEdge, repositoryId);
   buildContributorEdges(contributorsList, commitsList, nodes, addEdge, repositoryId);
-  buildPrEdges(prsList, nodes, addEdge, repositoryId);
+  buildPrEdges(prsList, nodes, addEdge, repositoryId, prFilesList, prCommitsList);
   buildIssueEdges(issuesList, nodes, addEdge, repositoryId);
   buildWorkflowEdges(workflowsList, nodes, addEdge, repositoryId);
   buildRunEdges(runsList, nodes, addEdge, repositoryId, workflowsList);
@@ -461,6 +467,34 @@ async function loadRuns(repositoryId: string, limit: number) {
     .from(ciRuns)
     .where(eq(ciRuns.repositoryId, repositoryId))
     .orderBy(desc(ciRuns.githubCreatedAt))
+    .limit(limit);
+}
+
+async function loadPrFiles(repositoryId: string, limit: number) {
+  const db = getDb();
+  return db
+    .select({
+      pullRequestId: prFiles.pullRequestId,
+      path: prFiles.path,
+      status: prFiles.status,
+      additions: prFiles.additions,
+      deletions: prFiles.deletions,
+    })
+    .from(prFiles)
+    .where(eq(prFiles.repositoryId, repositoryId))
+    .limit(limit);
+}
+
+async function loadPrCommits(repositoryId: string, limit: number) {
+  const db = getDb();
+  return db
+    .select({
+      pullRequestId: prCommits.pullRequestId,
+      commitId: prCommits.commitId,
+    })
+    .from(prCommits)
+    .innerJoin(pullRequests, eq(prCommits.pullRequestId, pullRequests.id))
+    .where(eq(pullRequests.repositoryId, repositoryId))
     .limit(limit);
 }
 
@@ -832,8 +866,24 @@ function buildPrEdges(
   nodes: Map<string, GraphNode>,
   addEdge: (edge: GraphEdge) => void,
   repositoryId: string,
+  prFilesList: Awaited<ReturnType<typeof loadPrFiles>>,
+  prCommitsList: Awaited<ReturnType<typeof loadPrCommits>>,
 ): void {
   const repoNodeId = stableNodeId("repository", repositoryId, repositoryId);
+
+  const prFilesByPr = new Map<string, typeof prFilesList>();
+  for (const pf of prFilesList) {
+    const list = prFilesByPr.get(pf.pullRequestId) ?? [];
+    list.push(pf);
+    prFilesByPr.set(pf.pullRequestId, list);
+  }
+
+  const prCommitsByPr = new Map<string, typeof prCommitsList>();
+  for (const pc of prCommitsList) {
+    const list = prCommitsByPr.get(pc.pullRequestId) ?? [];
+    list.push(pc);
+    prCommitsByPr.set(pc.pullRequestId, list);
+  }
 
   for (const pr of prsList) {
     const prNodeId = stableNodeId("pull_request", repositoryId, String(pr.number));
@@ -852,30 +902,42 @@ function buildPrEdges(
       },
     });
 
-    // PR -> Commit (contains_commit) - would need prCommits table
-    // For now, use headSha as evidence
-    if (pr.headSha) {
-      const commitNodeId = stableNodeId("commit", repositoryId, pr.headSha);
+    // PR -> Commits (contains_commit) via prCommits table
+    const prCommitRows = prCommitsByPr.get(pr.id) ?? [];
+    for (const pc of prCommitRows) {
+      const commitNodeId = stableNodeId("commit", repositoryId, pc.commitId);
       if (nodes.has(commitNodeId)) {
         addEdge({
           id: makeEdgeId(prNodeId, commitNodeId, "contains_commit"),
           sourceId: prNodeId,
           targetId: commitNodeId,
           type: "contains_commit",
-          evidenceIds: [`pr:${pr.number}`, `commit:${pr.headSha}`],
+          evidenceIds: [`pr:${pr.number}`, `commit:${pc.commitId}`],
           provenance: {
-            source: "pullRequests.headSha",
-            reason: "PR head commit",
+            source: "pr_commits",
+            reason: "PR contains this commit",
           },
         });
       }
     }
 
-    // PR -> Files (affects) - would need prFiles table
-    // For now, we'll note the relationship exists
-    if (pr.changedFilesCount && pr.changedFilesCount > 0) {
-      // The files would be loaded via prFiles, but we don't have them loaded here
-      // This is a known limitation - we can add if we load prFiles
+    // PR -> Files (affects) via prFiles table
+    const prFileRows = prFilesByPr.get(pr.id) ?? [];
+    for (const pf of prFileRows) {
+      const fileNodeId = stableNodeId("file", repositoryId, pf.path);
+      if (nodes.has(fileNodeId)) {
+        addEdge({
+          id: makeEdgeId(prNodeId, fileNodeId, "affects"),
+          sourceId: prNodeId,
+          targetId: fileNodeId,
+          type: "affects",
+          evidenceIds: [`pr:${pr.number}`, `file:${pf.path}`],
+          provenance: {
+            source: "pr_files",
+            reason: `PR modifies this file (${pf.status ?? "changed"}, +${pf.additions ?? 0}/-${pf.deletions ?? 0})`,
+          },
+        });
+      }
     }
   }
 }

@@ -348,6 +348,18 @@ class ApiClient {
     return this.request<GraphResponse>(`/api/repositories/${id}/graph${suffix}`);
   }
 
+  async getInvestigation(
+    id: string,
+    entityType: string,
+    entityId: string,
+  ): Promise<InvestigationContext> {
+    const search = new URLSearchParams();
+    search.set('entityType', entityType);
+    search.set('entityId', entityId);
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return this.request<InvestigationContext>(`/api/repositories/${id}/investigation${suffix}`);
+  }
+
   async getHealth() {
     return this.request<{ status: string; timestamp: string; uptime: number }>('/health');
   }
@@ -383,6 +395,51 @@ class ApiClient {
     return this.request<{ data: { id: string; name: string } }>('/api/repositories', {
       method: 'POST',
       body: data,
+    });
+  }
+
+  // AI Provider settings
+  async getKnownProviders(): Promise<Array<{ id: string; name: string; description: string; supportsModelListing: boolean; defaultBaseUrl: string; defaultModel: string }>> {
+    return this.request<Array<{ id: string; name: string; description: string; supportsModelListing: boolean; defaultBaseUrl: string; defaultModel: string }>>('/api/ai-providers/known');
+  }
+
+  async getAiProviders(): Promise<Array<{ id: string; provider: string; model: string; baseUrl: string | null; isActive: boolean; createdAt: string; updatedAt: string }>> {
+    return this.request<Array<{ id: string; provider: string; model: string; baseUrl: string | null; isActive: boolean; createdAt: string; updatedAt: string }>>('/api/ai-providers');
+  }
+
+  async saveAiProvider(data: { provider: string; model: string; baseUrl: string | null; apiKey: string | null }): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>('/api/ai-providers', {
+      method: 'POST',
+      body: {
+        ...data,
+        baseUrl: data.baseUrl || '',
+      },
+    });
+  }
+
+  async testAiProvider(provider: string, data: { model: string; baseUrl: string; apiKey: string | null }): Promise<{ success: boolean; model: string | null; latencyMs: number; error: string | null }> {
+    return this.request<{ success: boolean; model: string | null; latencyMs: number; error: string | null }>(`/api/ai-providers/${provider}/test`, {
+      method: 'POST',
+      body: data,
+    });
+  }
+
+  async listModels(provider: string, data: { baseUrl: string; apiKey: string | null }): Promise<{ models: string[] }> {
+    return this.request<{ models: string[] }>(`/api/ai-providers/${provider}/models`, {
+      method: 'POST',
+      body: data,
+    });
+  }
+
+  async setActiveAiProvider(provider: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/ai-providers/${provider}/active`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteAiProvider(provider: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/ai-providers/${provider}`, {
+      method: 'DELETE',
     });
   }
 }
@@ -1166,6 +1223,48 @@ export interface AskAiInfo {
   error: { code: string; message: string } | null;
 }
 
+export interface InvestigationTarget {
+  type: string;
+  identifier: string;
+}
+
+export interface InvestigationContext {
+  target: InvestigationTarget;
+  directRelationships: {
+    commits: unknown[];
+    files: unknown[];
+    prs: unknown[];
+    issues: unknown[];
+    runs: unknown[];
+    workflows: unknown[];
+    risks: unknown[];
+    incidents: unknown[];
+    contributors: unknown[];
+  };
+  temporalRelationships: {
+    changesBefore: unknown[];
+    changesAfter: unknown[];
+    incidentTimeline: unknown[];
+  };
+  repeatedPatterns: {
+    repeatedCiFailures: unknown[];
+    repeatedRiskyFiles: unknown[];
+    repeatedIncidentAreas: unknown[];
+  };
+  evidence: {
+    commits: unknown[];
+    files: unknown[];
+    prs: unknown[];
+    issues: unknown[];
+    runs: unknown[];
+    workflows: unknown[];
+    risks: unknown[];
+    incidents: unknown[];
+    contributors: unknown[];
+  };
+  unknowns: string[];
+}
+
 export interface AskResponse {
   question: string;
   intent: string;
@@ -1183,6 +1282,7 @@ export interface AskResponse {
     evidenceCount: number;
     truncated: boolean;
   };
+  investigation: InvestigationContext | null;
   ai: AskAiInfo;
 }
 

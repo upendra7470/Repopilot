@@ -24,6 +24,8 @@ import { askRoutes } from "./routes/ask.js";
 import { graphRoutes } from "./routes/graph.js";
 import { userRoutes } from "./routes/users.js";
 import { repositoryRoutes } from "./routes/repositories.js";
+import { aiProviderRoutes } from "./routes/ai-providers.js";
+import { investigationRoutes } from "./routes/investigation.js";
 import "./types/fastify.js";
 
 /** Structural view of the plugin's built-in GitHub endpoints. */
@@ -125,6 +127,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(graphRoutes, { prefix: "/api" });
   await app.register(userRoutes, { prefix: "/api" });
   await app.register(repositoryRoutes, { prefix: "/api" });
+  await app.register(aiProviderRoutes, { prefix: "/api" });
+  await app.register(investigationRoutes, { prefix: "/api" });
 
   return app;
 }

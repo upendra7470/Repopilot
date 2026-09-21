@@ -4,6 +4,7 @@ import {
   type AiConfig,
   AiError,
 } from "./ai-provider.js";
+export type { AiConfig };
 import { encryptSecret, decryptSecret, type EncryptedSecret } from "../auth/crypto.js";
 import { getDb } from "../db/index.js";
 import { userAiProviders } from "../db/schema.js";
@@ -30,7 +31,7 @@ export const KNOWN_PROVIDERS: Record<string, ProviderMetadata> = {
   anthropic: {
     id: "anthropic",
     name: "Anthropic",
-    description: "Anthropic API (Claude models) - requires native adapter",
+    description: "Anthropic API (Claude models) - native protocol",
     supportsModelListing: false,
     defaultBaseUrl: "https://api.anthropic.com/v1",
     defaultModel: "claude-3-5-sonnet-latest",
@@ -203,12 +204,12 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     }
   }
 
-  static async listModels(config: { baseUrl: string; apiKey: string | null }): Promise<string[]> {
+  static async listModels(_config: { baseUrl: string; apiKey: string | null }): Promise<string[]> {
     try {
-      const res = await fetch(`${config.baseUrl.replace(/\/$/, "")}/models`, {
+      const res = await fetch(`${_config.baseUrl.replace(/\/$/, "")}/models`, {
         method: "GET",
         headers: {
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
         },
       });
       if (!res.ok) {
@@ -242,13 +243,146 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   }
 }
 
+export class AnthropicAdapter implements ProviderAdapter {
+  private config: { baseUrl: string; apiKey: string | null; model: string };
+
+  constructor(config: { baseUrl: string; apiKey: string | null; model: string }) {
+    this.config = config;
+  }
+
+  async completeChat(options: {
+    system: string;
+    user: string;
+    maxTokens?: number;
+    timeoutMs?: number;
+  }): Promise<string> {
+    const logger = getLogger();
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      options.timeoutMs ?? 60_000,
+    );
+    try {
+      let res: Response;
+      try {
+        const messages: Array<{ role: string; content: string }> = [];
+        if (options.system) {
+          messages.push({ role: "system", content: options.system });
+        }
+        messages.push({ role: "user", content: options.user });
+
+        res = await fetch(`${this.config.baseUrl.replace(/\/$/, "")}/messages`, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": this.config.apiKey ?? "",
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            max_tokens: options.maxTokens ?? 2000,
+            temperature: 0,
+            messages,
+            system: options.system,
+          }),
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          throw new AiError("AI_TIMEOUT", "AI request timed out");
+        }
+        throw new AiError(
+          "AI_UNAVAILABLE",
+          `AI provider unreachable: ${err instanceof Error ? err.message : "network error"}`,
+        );
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        throw new AiError("AI_INVALID_KEY", "AI provider rejected the API key");
+      }
+      if (res.status === 429) {
+        throw new AiError("AI_RATE_LIMITED", "AI provider rate limit exceeded");
+      }
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => "");
+        throw new AiError(
+          "AI_BAD_RESPONSE",
+          `AI provider returned status ${res.status}: ${errorText}`,
+        );
+      }
+
+      const data = (await res.json().catch(() => null)) as {
+        content?: Array<{ type: string; text: string }>;
+      } | null;
+      const content = data?.content?.[0]?.text?.trim() ?? "";
+      if (!content) {
+        throw new AiError("AI_EMPTY_RESPONSE", "AI provider returned no content");
+      }
+      return content;
+    } finally {
+      clearTimeout(timeout);
+      logger.debug(
+        { baseUrl: this.config.baseUrl, model: this.config.model },
+        "AI completion finished",
+      );
+    }
+  }
+
+  static async listModels(_config: { baseUrl: string; apiKey: string | null }): Promise<string[]> {
+    // Anthropic does not provide a models listing endpoint.
+    return [];
+  }
+
+  async validateCredentials(config: { baseUrl: string; apiKey: string | null }): Promise<{ valid: boolean; error?: string }> {
+    // Validate by making a minimal completion request.
+    try {
+      const testAdapter = new AnthropicAdapter({ baseUrl: config.baseUrl, apiKey: config.apiKey, model: "claude-3-5-sonnet-latest" });
+      await testAdapter.completeChat({
+        system: "You are a test assistant.",
+        user: "Reply with 'OK'",
+        maxTokens: 10,
+        timeoutMs: 15000,
+      });
+      return { valid: true };
+    } catch (err) {
+      if (err instanceof AiError) {
+        return { valid: false, error: err.message };
+      }
+      return { valid: false, error: err instanceof Error ? err.message : "Connection failed" };
+    }
+  }
+}
+
+export function createAdapter(config: AiConfig): ProviderAdapter {
+  const metadata = KNOWN_PROVIDERS[config.provider];
+  if (!metadata) {
+    throw new Error(`Unknown provider: ${config.provider}`);
+  }
+  if (config.provider === "anthropic") {
+    return new AnthropicAdapter({
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      model: config.model,
+    });
+  }
+  // All other providers use OpenAI-compatible adapter
+  return new OpenAICompatibleAdapter({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+  });
+}
+
 export function getProviderAdapter(providerId: string): ProviderAdapter {
   const metadata = KNOWN_PROVIDERS[providerId];
   if (!metadata) {
     throw new Error(`Unknown provider: ${providerId}`);
   }
-  // For now, all known providers use OpenAI-compatible adapter
-  // Native adapters can be added later for providers like Anthropic
+  // Return appropriate adapter based on provider
+  if (providerId === "anthropic") {
+    return new AnthropicAdapter({ baseUrl: "", apiKey: null, model: "" });
+  }
+  // All other providers use OpenAI-compatible adapter
   return new OpenAICompatibleAdapter({
     baseUrl: "",
     apiKey: null,
@@ -407,35 +541,61 @@ export async function deleteUserAiProvider(userId: string, provider: string): Pr
  * Test an AI provider configuration.
  */
 export async function testAiProvider(config: { provider: string; model: string; baseUrl: string; apiKey: string | null }) {
-  // Create a new adapter instance with the test config
-  const testAdapter = new OpenAICompatibleAdapter({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
-  });
+  const started = Date.now();
+  let adapter: ProviderAdapter;
+  try {
+    adapter = createAdapter({
+      provider: config.provider,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+    });
+  } catch (err) {
+    return { success: false, error: "Unknown provider", latencyMs: Date.now() - started };
+  }
 
-  const validation = await testAdapter.validateCredentials({
+  const validation = await adapter.validateCredentials({
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
   });
 
   if (!validation.valid) {
-    return { success: false, error: validation.error };
+    return { success: false, error: validation.error, latencyMs: Date.now() - started };
   }
 
   // Try a minimal completion
   try {
-    await testAdapter.completeChat({
+    await adapter.completeChat({
       system: "You are a test assistant.",
       user: "Reply with 'OK'",
       maxTokens: 10,
       timeoutMs: 15000,
     });
-    return { success: true, model: config.model };
+    return { success: true, model: config.model, latencyMs: Date.now() - started };
   } catch (err) {
+    let errorCategory = "Test failed";
     if (err instanceof AiError) {
-      return { success: false, error: err.message };
+      // Map AiError codes to safe categories
+      switch (err.code) {
+        case "AI_TIMEOUT":
+          errorCategory = "Timeout";
+          break;
+        case "AI_INVALID_KEY":
+          errorCategory = "Invalid credentials";
+          break;
+        case "AI_RATE_LIMITED":
+          errorCategory = "Rate limited";
+          break;
+        case "AI_BAD_RESPONSE":
+          errorCategory = "Provider error";
+          break;
+        case "AI_EMPTY_RESPONSE":
+          errorCategory = "Empty response";
+          break;
+        default:
+          errorCategory = "Provider error";
+      }
     }
-    return { success: false, error: err instanceof Error ? err.message : "Test failed" };
+    return { success: false, error: errorCategory, latencyMs: Date.now() - started };
   }
 }

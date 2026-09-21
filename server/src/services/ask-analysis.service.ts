@@ -5,10 +5,11 @@ import { getDb } from "../db/index.js";
 import { askAnalyses } from "../db/schema.js";
 import {
   AiError,
-  completeChat,
   extractJsonObject,
   getAiConfig,
 } from "./ai-provider.js";
+import { createAdapter, type AiConfig } from "./ai-registry.js";
+import { buildInvestigationContext, type InvestigationContext } from "./investigation.service.js";
 import {
   answerQuestion,
   type AskResult,
@@ -241,10 +242,84 @@ function buildEntitiesContext(entities: AskEntityRef[]): string {
     .join("\n");
 }
 
+function buildInvestigationContextPrompt(investigation: InvestigationContext): string {
+  const { target, directRelationships, temporalRelationships, repeatedPatterns, evidence, unknowns } = investigation;
+
+  const targetLabel = `${target.type}:${target.identifier}`;
+  const lines: string[] = [];
+
+  lines.push(`TARGET: ${targetLabel}`);
+
+  if (directRelationships) {
+    const rel = directRelationships;
+    const parts: string[] = [];
+    if (rel.runs.length) parts.push(`incident → run:${rel.runs.map((r) => r.githubId).join(", ")}`);
+    if (rel.workflows.length) parts.push(`incident → workflow:${rel.workflows.map((w) => w.githubId).join(", ")}`);
+    if (rel.commits.length) parts.push(`incident → commit:${rel.commits.map((c) => c.shortSha).join(", ")}`);
+    if (rel.files.length) parts.push(`incident → file:${rel.files.map((f) => f.path).join(", ")}`);
+    if (rel.prs.length) parts.push(`incident → pull_request:${rel.prs.map((p) => p.number).join(", ")}`);
+    if (rel.issues.length) parts.push(`incident → issue:${rel.issues.map((i) => i.number).join(", ")}`);
+    if (rel.risks.length) parts.push(`incident → risk:${rel.risks.map((r) => r.id).join(", ")}`);
+    if (parts.length) {
+      lines.push("RELATIONSHIPS:");
+      parts.forEach((p) => lines.push(`  ${p}`));
+    }
+  }
+
+  if (temporalRelationships?.changesBefore?.length) {
+    lines.push("TEMPORAL:");
+    temporalRelationships.changesBefore.slice(0, 5).forEach((c) => {
+      lines.push(`  ${c.shortSha} occurred before target`);
+    });
+  }
+
+  if (repeatedPatterns) {
+    const { repeatedCiFailures, repeatedRiskyFiles, repeatedIncidentAreas } = repeatedPatterns;
+    if (repeatedCiFailures.length) {
+      lines.push("PATTERNS:");
+      repeatedCiFailures.forEach((p) => {
+        lines.push(`  ${p.workflowName ?? p.workflowGithubId} has ${p.failureCount} failures (streak: ${p.streakLength})`);
+      });
+    }
+    if (repeatedRiskyFiles.length) {
+      if (!lines.includes("PATTERNS:")) lines.push("PATTERNS:");
+      repeatedRiskyFiles.slice(0, 3).forEach((p) => {
+        lines.push(`  ${p.path} appears in ${p.riskCount} risk findings`);
+      });
+    }
+    if (repeatedIncidentAreas.length) {
+      if (!lines.includes("PATTERNS:")) lines.push("PATTERNS:");
+      repeatedIncidentAreas.forEach((p) => {
+        lines.push(`  ${p.workflowName ?? p.workflowGithubId} has ${p.incidentCount} incidents`);
+      });
+    }
+  }
+
+  if (evidence) {
+    const ev = evidence;
+    const parts: string[] = [];
+    if (ev.runs.length) parts.push(`run:${ev.runs.map((r) => r.githubId).join(", ")}`);
+    if (ev.commits.length) parts.push(`commit:${ev.commits.map((c) => c.shortSha).join(", ")}`);
+    if (ev.files.length) parts.push(`file:${ev.files.map((f) => f.path).join(", ")}`);
+    if (parts.length) {
+      lines.push("EVIDENCE:");
+      parts.forEach((p) => lines.push(`  ${p}`));
+    }
+  }
+
+  if (unknowns?.length) {
+    lines.push("UNKNOWN:");
+    unknowns.slice(0, 3).forEach((u) => lines.push(`  ${u}`));
+  }
+
+  return lines.join("\n");
+}
+
 export async function analyzeWithAi(
   result: AskResult,
   history: AskConversationTurn[] = [],
-  aiConfig?: { provider: string; model: string; baseUrl: string; apiKey: string | null } | null,
+  aiConfig?: AiConfig | null,
+  investigationContext?: InvestigationContext | null,
 ): Promise<AskAiResponse | { aiUnavailable: true }> {
   const logger = getLogger();
   const config = aiConfig ?? getAiConfig();
@@ -258,7 +333,12 @@ export async function analyzeWithAi(
   const windowContext = buildWindowContext(result.window);
   const entitiesContext = buildEntitiesContext(result.entities);
 
-  const userPrompt = `Question: "${result.question}"
+  let investigationPrompt = "";
+  if (investigationContext) {
+    investigationPrompt = `Investigation Context:\n${buildInvestigationContextPrompt(investigationContext)}\n\n`;
+  }
+
+  const userPrompt = `${investigationPrompt}Question: "${result.question}"
 Intent: ${result.intent}
 ${entitiesContext}
 ${windowContext}
@@ -269,16 +349,21 @@ ${evidenceContext}
 
 Provide a structured JSON response per the system prompt.`;
 
+  let adapter;
   try {
-    const raw = await completeChat(
-      {
-        system: SYSTEM_PROMPT,
-        user: userPrompt,
-        maxTokens: 3000,
-        timeoutMs: 60_000,
-      },
-      config,
-    );
+    adapter = createAdapter(config);
+  } catch (err) {
+    logger.warn({ err, provider: config.provider }, "Failed to create AI adapter");
+    return { aiUnavailable: true };
+  }
+
+  try {
+    const raw = await adapter.completeChat({
+      system: SYSTEM_PROMPT,
+      user: userPrompt,
+      maxTokens: 3000,
+      timeoutMs: 60_000,
+    });
     const parsed = extractJsonObject(raw) as AskAiResponse;
 
     const validIds = new Set(result.evidence.map((e) => e.id));
@@ -311,10 +396,10 @@ export async function requestAskAnalysis(
   question: string,
   context?: { entityType: string; entityId: string },
   history: AskConversationTurn[] = [],
-  aiConfig?: { provider: string; model: string; baseUrl: string; apiKey: string | null } | null,
+  aiConfig?: AiConfig | null,
 ): Promise<AskAnalysisResult> {
   const logger = getLogger();
-  const deterministic = await answerQuestion(repositoryId, question, history);
+  const deterministic = await answerQuestion(repositoryId, question, history, context);
 
   const evidencePackage = buildEvidencePackage(deterministic);
   const evidenceFingerprint = fingerprintEvidence(JSON.stringify(evidencePackage));
@@ -332,7 +417,20 @@ export async function requestAskAnalysis(
     return cached;
   }
 
-  const ai = await analyzeWithAi(deterministic, history, aiConfig);
+  // Fetch investigation context if entity context is provided
+  let investigationContext: InvestigationContext | null = null;
+  if (context?.entityType && context?.entityId) {
+    try {
+      investigationContext = await buildInvestigationContext(repositoryId, {
+        type: context.entityType as InvestigationContext["target"]["type"],
+        identifier: context.entityId,
+      });
+    } catch (err) {
+      logger.warn({ err, repositoryId, context }, "Failed to build investigation context, proceeding without");
+    }
+  }
+
+  const ai = await analyzeWithAi(deterministic, history, aiConfig, investigationContext);
 
   let result: AskAnalysisResult;
   if ("aiUnavailable" in ai) {
@@ -348,7 +446,7 @@ export async function requestAskAnalysis(
     result = {
       status: "completed",
       fingerprint: evidenceFingerprint,
-      model: getAiConfig()?.model ?? null,
+      model: aiConfig?.model ?? null,
       analysis: ai,
       error: null,
       cached: false,

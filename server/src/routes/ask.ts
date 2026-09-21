@@ -13,6 +13,7 @@ import {
 } from "../services/ask-analysis.service.js";
 import { getAiConfig } from "../services/ai-provider.js";
 import { resolveAiConfig } from "../services/ai-registry.js";
+import { buildInvestigationContext, type InvestigationContext, type InvestigationTarget } from "../services/investigation.service.js";
 
 const idParams = {
   type: "object",
@@ -109,6 +110,7 @@ const askResponseSchema = {
     "relatedEntities",
     "metadata",
     "ai",
+    "investigation",
   ],
   properties: {
     question: { type: "string" },
@@ -129,6 +131,68 @@ const askResponseSchema = {
         retrievalMs: { type: "number" },
         evidenceCount: { type: "number" },
         truncated: { type: "boolean" },
+      },
+    },
+    investigation: {
+      type: ["object", "null"],
+      properties: {
+        target: {
+          type: "object",
+          required: ["type", "identifier"],
+          properties: {
+            type: { type: "string" },
+            identifier: { type: "string" },
+          },
+        },
+        directRelationships: {
+          type: "object",
+          required: ["commits", "files", "prs", "issues", "runs", "workflows", "risks", "incidents", "contributors"],
+          properties: {
+            commits: { type: "array", items: { type: "object" } },
+            files: { type: "array", items: { type: "object" } },
+            prs: { type: "array", items: { type: "object" } },
+            issues: { type: "array", items: { type: "object" } },
+            runs: { type: "array", items: { type: "object" } },
+            workflows: { type: "array", items: { type: "object" } },
+            risks: { type: "array", items: { type: "object" } },
+            incidents: { type: "array", items: { type: "object" } },
+            contributors: { type: "array", items: { type: "object" } },
+          },
+        },
+        temporalRelationships: {
+          type: "object",
+          required: ["changesBefore", "changesAfter", "incidentTimeline"],
+          properties: {
+            changesBefore: { type: "array", items: { type: "object" } },
+            changesAfter: { type: "array", items: { type: "object" } },
+            incidentTimeline: { type: "array", items: { type: "object" } },
+          },
+        },
+        repeatedPatterns: {
+          type: "object",
+          required: ["repeatedCiFailures", "repeatedRiskyFiles", "repeatedIncidentAreas"],
+          properties: {
+            repeatedCiFailures: { type: "array", items: { type: "object" } },
+            repeatedRiskyFiles: { type: "array", items: { type: "object" } },
+            repeatedIncidentAreas: { type: "array", items: { type: "object" } },
+          },
+        },
+        evidence: {
+          type: "object",
+          required: ["commits", "files", "prs", "issues", "runs", "workflows", "risks", "incidents", "contributors"],
+          properties: {
+            commits: { type: "array", items: { type: "object" } },
+            files: { type: "array", items: { type: "object" } },
+            prs: { type: "array", items: { type: "object" } },
+            issues: { type: "array", items: { type: "object" } },
+            runs: { type: "array", items: { type: "object" } },
+            workflows: { type: "array", items: { type: "object" } },
+            risks: { type: "array", items: { type: "object" } },
+            incidents: { type: "array", items: { type: "object" } },
+            contributors: { type: "array", items: { type: "object" } },
+          },
+        },
+        unknowns: { type: "array", items: { type: "string" } },
       },
     },
     ai: {
@@ -189,6 +253,20 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.user!.id;
       const aiConfig = await resolveAiConfig(userId);
 
+      // Build investigation context if entity context is provided
+      let investigationContext: InvestigationContext | null = null;
+      if (context?.entityType && context?.entityId) {
+        try {
+          investigationContext = await buildInvestigationContext(id, {
+            type: context.entityType as InvestigationTarget["type"],
+            identifier: context.entityId,
+          });
+        } catch (err) {
+          const logger = (await import("../utils/logger.js")).getLogger();
+          logger.warn({ err, repositoryId: id, context }, "Failed to build investigation context, proceeding without");
+        }
+      }
+
       const aiResult = await requestAskAnalysis(id, question.trim(), context ?? undefined, history ?? [], aiConfig ?? undefined);
 
       const merged = mergeDeterministicWithAi(deterministic, aiResult.analysis ?? { aiUnavailable: true });
@@ -208,6 +286,16 @@ export async function askRoutes(app: FastifyInstance): Promise<void> {
         investigationNextSteps: merged.investigationNextSteps,
         relatedEntities: merged.relatedEntities,
         metadata: merged.metadata,
+        investigation: investigationContext
+          ? {
+              target: investigationContext.target,
+              directRelationships: investigationContext.directRelationships,
+              temporalRelationships: investigationContext.temporalRelationships,
+              repeatedPatterns: investigationContext.repeatedPatterns,
+              evidence: investigationContext.evidence,
+              unknowns: investigationContext.unknowns,
+            }
+          : null,
         ai: {
           available: aiResult.status === "completed",
           provider: aiConfig?.provider ?? config?.provider ?? null,

@@ -284,6 +284,7 @@ export async function resolveEntities(
   repositoryId: string,
   question: string,
   historyEvidenceIds: string[] = [],
+  context?: { entityType: string; entityId: string } | null,
 ): Promise<AskEntityRef[]> {
   const text = question;
   const entities: AskEntityRef[] = [];
@@ -295,6 +296,27 @@ export async function resolveEntities(
       entities.push(entity);
     }
   };
+
+  // Contextual entity from Knowledge Graph (explicitly provided, not from question text)
+  if (context?.entityType && context?.entityId) {
+    const kindMap: Record<string, AskEntityKind> = {
+      commit: "commit",
+      file: "file",
+      contributor: "contributor",
+      pull_request: "pr",
+      issue: "issue",
+      ci_workflow: "workflow",
+      ci_run: "run",
+      risk: "risk",
+      incident: "incident",
+    };
+    const kind = kindMap[context.entityType] ?? "file";
+    push({
+      kind,
+      value: context.entityId,
+      label: `${context.entityType}:${context.entityId}`,
+    });
+  }
 
   // Explicit PR / issue numbers.
   for (const match of text.matchAll(/(?:\bpr\b|pull request|issue)[\s#]*(\d{1,6})/gi)) {
@@ -1035,6 +1057,7 @@ export async function answerQuestion(
   repositoryId: string,
   question: string,
   history: AskConversationTurn[] = [],
+  context?: { entityType: string; entityId: string } | null,
 ): Promise<AskResult> {
   const started = Date.now();
   const logger = getLogger();
@@ -1046,7 +1069,7 @@ export async function answerQuestion(
   const intent = classifyIntent(question);
   const window = parseAskWindow(question);
   const historyIds = history.flatMap((t) => t.evidenceIds).slice(-30);
-  const entities = await resolveEntities(repositoryId, question, historyIds);
+  const entities = await resolveEntities(repositoryId, question, historyIds, context);
   const { evidence, truncated } = await retrieveEvidence(repositoryId, {
     intent,
     entities,

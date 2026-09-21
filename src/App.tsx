@@ -19,6 +19,7 @@ import { RepositoryDetailPage } from './pages/RepositoryDetailPage';
 import { BriefPage } from './pages/BriefPage';
 import { AskRepoPilotPage } from './pages/AskRepoPilotPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { InvestigationPage } from './pages/InvestigationPage';
 
 export default function App() {
   return (
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="/repository" element={<RepositoryPage />} />
             <Route path="/repository/:id" element={<RepositoryDetailPage />} />
             <Route path="/ask" element={<AskRepoPilotPage />} />
+            <Route path="/investigation" element={<InvestigationPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

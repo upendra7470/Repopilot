@@ -466,6 +466,11 @@ export function AskRepoPilotPage() {
                 <span>{response.metadata.evidenceCount} evidence items</span>
                 {response.ai.provider && <span>Model: {response.ai.model}</span>}
               </div>
+              {!response.ai.available && (
+                <div className="mt-2 p-2 bg-bg-tertiary border border-border-primary rounded text-xs text-text-secondary">
+                  AI analysis unavailable. <Link to="/settings?section=ai" className="text-accent hover:underline">Configure an AI provider</Link> to enable AI-enhanced investigations.
+                </div>
+              )}
             </Panel>
 
             <Panel title="Answer" subtitle="Grounded explanation from repository evidence.">
