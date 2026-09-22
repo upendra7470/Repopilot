@@ -94,6 +94,76 @@ describe("POST /api/ai-providers/discover-models", () => {
     expect(body.error).toBeNull();
   });
 
+  it("refuses link-local metadata addresses without fetching", async () => {
+    const login = await loginTestUser();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ai-providers/discover-models",
+      headers: { cookie: login.cookie },
+      payload: { provider: "custom", apiKey: null, baseUrl: "http://169.254.169.254/v1" },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+    expect(body.models).toEqual([]);
+    expect(body.error).toContain("blocked address");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-http schemes and embedded credentials", async () => {
+    const login = await loginTestUser();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (const baseUrl of ["ftp://example.com/v1", "https://user:pass@example.com/v1"]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/ai-providers/discover-models",
+        headers: { cookie: login.cookie },
+        payload: { provider: "custom", apiKey: null, baseUrl },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.payload).models).toEqual([]);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses unresolvable hosts without fetching", async () => {
+    const login = await loginTestUser();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ai-providers/discover-models",
+      headers: { cookie: login.cookie },
+      payload: { provider: "custom", apiKey: null, baseUrl: "https://nonexistent.invalid/v1" },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+    expect(body.models).toEqual([]);
+    expect(body.error).toContain("could not be resolved");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects blocked base URLs at save time", async () => {
+    const login = await loginTestUser();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ai-providers",
+      headers: { cookie: login.cookie },
+      payload: {
+        provider: "custom",
+        model: "x",
+        baseUrl: "http://169.254.169.254/v1",
+        apiKey: null,
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
   it("reports invalid API keys gracefully without throwing", async () => {
     const login = await loginTestUser();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(modelsResponse({ error: "bad key" }, 401)));

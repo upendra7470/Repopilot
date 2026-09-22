@@ -7,6 +7,7 @@ import {
   getProviderMetadata,
   testAiProvider,
   testConnection,
+  validateOutboundBaseUrl,
   discoverModels,
   discoverModelsWithSavedCredentials,
   saveUserAiProvider,
@@ -201,12 +202,11 @@ export async function aiProviderRoutes(app: FastifyInstance): Promise<void> {
         return reply.badRequest("Unknown provider");
       }
 
-      // Validate baseUrl is a valid URL if provided
+      // Validate baseUrl if provided (scheme, credentials, blocked targets)
       if (baseUrl) {
-        try {
-          new URL(baseUrl);
-        } catch {
-          return reply.badRequest("Invalid baseUrl");
+        const baseUrlError = await validateOutboundBaseUrl(baseUrl);
+        if (baseUrlError) {
+          return reply.badRequest(baseUrlError);
         }
       }
 
@@ -284,12 +284,15 @@ export async function aiProviderRoutes(app: FastifyInstance): Promise<void> {
       if (!metadata.supportsModelListing) {
         return reply.send({ models: [] });
       }
+      if (await validateOutboundBaseUrl(baseUrl)) {
+        return reply.send({ models: [] });
+      }
 
       try {
         const adapter = createAdapter({ provider, model: "", baseUrl, apiKey });
         const models = await adapter.listModels?.({ baseUrl, apiKey }) ?? [];
         return reply.send({ models });
-      } catch (err) {
+      } catch {
         return reply.send({ models: [] });
       }
     },

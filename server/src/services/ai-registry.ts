@@ -657,6 +657,75 @@ function sanitizeContextWindow(value: unknown): number | undefined {
 }
 
 /**
+ * Outbound base-URL guard (SSRF hardening).
+ *
+ * Provider base URLs are user-supplied and fetched server-side, so they are
+ * validated before any request: http(s) scheme only, plus a block on
+ * link-local/unspecified targets — most importantly the cloud metadata
+ * address 169.254.169.254, reachable from the server but never a legitimate
+ * model endpoint. DNS is resolved and every answer checked, so a hostile
+ * hostname cannot smuggle a blocked address past a literal-IP check.
+ *
+ * Deliberate tradeoff, documented: loopback and private-LAN addresses are
+ * ALLOWED because local-first providers (Ollama, LM Studio) and self-hosted
+ * gateways require them. The residual risk (an authenticated user probing
+ * their own LAN through the server) is accepted for a self-hosted BYOK tool;
+ * the metadata-service hole — the credential-bearing target — is closed.
+ */
+function isBlockedIp(addr: string): boolean {
+  const v = addr.toLowerCase();
+  if (v === "0.0.0.0" || v === "::") return true;
+  if (v.startsWith("169.254.")) return true;
+  if (v.startsWith("fe80:") || v.startsWith("[fe80:")) return true;
+  return false;
+}
+
+async function resolveHostIps(hostname: string): Promise<string[] | null> {
+  const clean = hostname.replace(/^\[|\]$/g, "");
+  const { isIP } = await import("node:net");
+  if (isIP(clean)) return [clean];
+  try {
+    const { lookup } = await import("node:dns/promises");
+    const settled = await Promise.race([
+      lookup(clean, { all: true }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("dns timeout")), 5000),
+      ),
+    ]);
+    return settled.map((r) => r.address);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns null when the base URL is safe to fetch, or a human-readable
+ * reason when it must be refused. Never throws.
+ */
+export async function validateOutboundBaseUrl(baseUrl: string): Promise<string | null> {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return "Invalid base URL";
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return "Base URL must use http or https";
+  }
+  if (url.username || url.password) {
+    return "Base URL must not embed credentials";
+  }
+  const ips = await resolveHostIps(url.hostname);
+  if (!ips) {
+    return "Base URL host could not be resolved";
+  }
+  if (ips.some(isBlockedIp)) {
+    return "Base URL resolves to a blocked address";
+  }
+  return null;
+}
+
+/**
  * Short-lived server-side model catalog cache (Phase 22, Step 14).
  * Keyed by user + provider + base URL so one user's catalog can never
  * leak into another user's session. Stores normalized models only —
@@ -701,10 +770,9 @@ export async function discoverModels(config: {
   if (!baseUrl) {
     return { models: [], error: "A base URL is required for this provider", cached: false };
   }
-  try {
-    new URL(baseUrl);
-  } catch {
-    return { models: [], error: "Invalid base URL", cached: false };
+  const baseUrlError = await validateOutboundBaseUrl(baseUrl);
+  if (baseUrlError) {
+    return { models: [], error: baseUrlError, cached: false };
   }
 
   if (config.provider === "anthropic") {
@@ -806,6 +874,10 @@ export async function testConnection(config: {
   if (!baseUrl) {
     return { success: false, error: "A base URL is required for this provider", latencyMs: Date.now() - started };
   }
+  const baseUrlError = await validateOutboundBaseUrl(baseUrl);
+  if (baseUrlError) {
+    return { success: false, error: baseUrlError, latencyMs: Date.now() - started };
+  }
   let adapter: ProviderAdapter;
   try {
     adapter = createAdapter({ provider: config.provider, model: "", baseUrl, apiKey: config.apiKey ?? null });
@@ -864,6 +936,10 @@ export async function discoverModelsWithSavedCredentials(
  */
 export async function testAiProvider(config: { provider: string; model: string; baseUrl: string; apiKey: string | null }) {
   const started = Date.now();
+  const baseUrlError = await validateOutboundBaseUrl(config.baseUrl);
+  if (baseUrlError) {
+    return { success: false, error: baseUrlError, latencyMs: Date.now() - started };
+  }
   let adapter: ProviderAdapter;
   try {
     adapter = createAdapter({
@@ -872,7 +948,7 @@ export async function testAiProvider(config: { provider: string; model: string; 
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
     });
-  } catch (err) {
+  } catch {
     return { success: false, error: "Unknown provider", latencyMs: Date.now() - started };
   }
 
